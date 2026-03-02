@@ -777,18 +777,38 @@ function HearingTest({onComplete, onSkip}) {
           <Lbl t="CHOOSE TEST RESOLUTION" s={{textAlign:"center",marginTop:5,fontSize:14}}/>
         </div>
         <Lbl t="Use headphones or earbuds in a quiet room. Each mode tests both ears." s={{textAlign:"center",marginBottom:16,fontSize:13}}/>
-        {TEST_MODES.map(m=>(
+        {TEST_MODES.map(m=>{
+          const FMIN=200, FMAX=16000;
+          const logP = f => Math.log2(f/FMIN)/Math.log2(FMAX/FMIN)*100;
+          return (
           <div key={m.id} onClick={()=>setTestMode(m.id)}
             style={{background:K.card,border:`1px solid ${K.border}`,borderRadius:14,padding:20,marginBottom:10,cursor:"pointer",transition:"all 0.15s"}}
             onMouseEnter={e=>e.currentTarget.style.borderColor=K.teal}
             onMouseLeave={e=>e.currentTarget.style.borderColor=K.border}>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
               <Big t={m.label} sz={20} c={K.teal}/>
               <Lbl t={m.est} c={K.amber} sz={13}/>
             </div>
-            <Lbl t={m.desc} s={{lineHeight:1.8}}/>
+            <Lbl t={m.desc} s={{lineHeight:1.8,marginBottom:10}}/>
+            {/* Visual frequency coverage bar */}
+            <div style={{position:"relative",height:18,background:K.dim,borderRadius:3,marginBottom:3}}>
+              {m.freqs.map(f=>(
+                <div key={f} title={hzFmt(f)} style={{position:"absolute",left:`${logP(f)}%`,top:"50%",
+                  transform:"translate(-50%,-50%)",width:3,height:12,
+                  background:K.teal,borderRadius:2,opacity:0.85}}/>
+              ))}
+            </div>
+            <div style={{position:"relative",height:12}}>
+              {[250,500,1000,2000,4000,8000,16000].map(f=>(
+                <span key={f} style={{position:"absolute",left:`${logP(f)}%`,transform:"translateX(-50%)",
+                  fontSize:7,color:K.sub,fontFamily:"'Courier New',monospace"}}>
+                  {f>=1000?`${f/1000}k`:f}
+                </span>
+              ))}
+            </div>
           </div>
-        ))}
+          );
+        })}
         <div style={{textAlign:"center",marginTop:14}}>
           <button onClick={onSkip} style={{fontFamily:"system-ui",fontSize:12,padding:"8px 24px",background:"transparent",border:`1px solid ${K.muted}`,borderRadius:7,color:K.muted,transition:"all 0.2s",letterSpacing:"0.1em"}}
             onMouseEnter={e=>{e.currentTarget.style.borderColor=K.teal;e.currentTarget.style.color=K.teal;}}
@@ -1527,7 +1547,7 @@ function NoiseTherapy({tinnitusFreq:initF, hearingResults, noiseTypeOnly}) {
     const src = ctx.createBufferSource(); src.buffer=buf; src.loop=true;
     const gain = ctx.createGain(); gain.gain.value = dBtoG(vl);
     const an = ctx.createAnalyser(); an.fftSize=2048; analyR.current=an;
-    if (!noiseTypeOnly) {
+    if (type === "notched") {
       // 3-stage ERB-scaled notch cascade for therapeutic TMNMT shaping:
       //   Stage 1 — deep tight notch at exact tinnitus frequency
       //   Stage 2 — wider shallower notch (broadens the notch skirts)
@@ -1557,7 +1577,7 @@ function NoiseTherapy({tinnitusFreq:initF, hearingResults, noiseTypeOnly}) {
       g.fillStyle=K.bg; g.fillRect(0,0,W,H);
       const sr=ac.current?ac.current.sampleRate:44100;
       const tf=tfRef.current;
-      if (!noiseTypeOnly) {
+      if (ntRef.current === "notched") {
         const tx=(Math.log2(tf/20)/Math.log2(sr/2/20))*W;
         g.fillStyle="rgba(255,71,87,0.07)"; g.fillRect(tx-20,0,40,H);
         g.strokeStyle="rgba(255,71,87,0.6)"; g.setLineDash([4,4]);
