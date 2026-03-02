@@ -206,6 +206,18 @@ const erbOct = (f) => {
   return Math.log2((f + e / 2) / Math.max(f - e / 2, 1));
 };
 
+// ─── User Helpers ─────────────────────────────────────────────────────────────
+const USER_COLORS = ["#00d4b4","#ffa502","#fd79a8","#a29bfe","#26de81","#74b9ff","#fdcb6e","#e17055"];
+const mkUid = () => `u${Date.now().toString(36)}${Math.random().toString(36).slice(2,5)}`;
+const getAllUsers = () => { try{return JSON.parse(localStorage.getItem("tinnitus_users")||"[]");}catch(_){return[];} };
+const saveUsers  = (us) => { try{localStorage.setItem("tinnitus_users",JSON.stringify(us));}catch(_){} };
+const uKey  = (uid,k)   => `tu_${uid}_${k}`;
+const uGet  = (uid,k)   => { try{return localStorage.getItem(uKey(uid,k));}catch(_){return null;} };
+const uSet  = (uid,k,v) => { try{localStorage.setItem(uKey(uid,k),v);}catch(_){} };
+const uGetJ = (uid,k,d) => { try{const s=uGet(uid,k);return s?JSON.parse(s):d;}catch(_){return d;} };
+const uSetJ = (uid,k,v) => uSet(uid,k,JSON.stringify(v));
+const uDel  = (uid,k)   => { try{localStorage.removeItem(uKey(uid,k));}catch(_){} };
+
 // ─── Step Bar ─────────────────────────────────────────────────────────────────
 function StepBar({phase}) {
   const steps = [{n:1,label:"HEARING TEST"},{n:2,label:"TONE FINDER"},{n:3,label:"THERAPY"}];
@@ -394,6 +406,87 @@ function OctaveCheck({freq, vol, earRoute, onConfirm, onOctaveUp, onOctaveDown})
   );
 }
 
+// ─── Account Screen ───────────────────────────────────────────────────────────
+function AccountScreen({onSelect}) {
+  const [users,   setUsers]   = useState(getAllUsers);
+  const [adding,  setAdding]  = useState(false);
+  const [newName, setNewName] = useState("");
+
+  const addUser = () => {
+    const name = newName.trim();
+    if (!name) return;
+    const id    = mkUid();
+    const color = USER_COLORS[users.length % USER_COLORS.length];
+    const u     = {id, name, color, createdAt: new Date().toISOString()};
+    const updated = [...users, u];
+    saveUsers(updated);
+    setUsers(updated);
+    setNewName(""); setAdding(false);
+    onSelect(u, "begin");
+  };
+
+  return (
+    <div style={{animation:"up 0.3s ease", maxWidth:640, margin:"0 auto"}}>
+      <div style={{textAlign:"center", marginBottom:28}}>
+        <Big t={<>TINNITUS <span style={{color:K.text}}>SUITE</span></>} sz={28} c={K.teal} s={{marginBottom:4}}/>
+        <Lbl t="SELECT OR CREATE A PROFILE" s={{textAlign:"center",fontSize:11}}/>
+      </div>
+
+      <div style={{display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))", gap:14, marginBottom:20}}>
+        {users.map(u => {
+          const audios   = uGetJ(u.id,"audiograms",[]);
+          const tones    = uGetJ(u.id,"tones",[]);
+          const sessions = uGetJ(u.id,"sessions",[]);
+          const totalMins = Math.round(sessions.reduce((a,s)=>a+(s.duration||0),0)/60);
+          const lastTone  = tones.length ? tones[tones.length-1].freq : null;
+          const hasReady  = audios.length>0 && lastTone;
+          return (
+            <div key={u.id} style={{background:K.card,borderRadius:12,padding:"18px 20px",border:`1px solid ${u.color}44`}}>
+              <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:12}}>
+                <div style={{width:44,height:44,borderRadius:22,background:u.color,display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,fontWeight:700,color:"#111",flexShrink:0}}>
+                  {u.name[0].toUpperCase()}
+                </div>
+                <div>
+                  <div style={{fontWeight:700,fontSize:16,letterSpacing:"0.05em"}}>{u.name.toUpperCase()}</div>
+                  <div style={{fontSize:11,color:K.muted}}>
+                    {audios.length} test{audios.length!==1?"s":""} · {lastTone ? `${lastTone} Hz` : "no tone yet"} · {totalMins} min therapy
+                  </div>
+                </div>
+              </div>
+              <div style={{display:"flex",gap:8}}>
+                {hasReady && (
+                  <button onClick={()=>onSelect(u,"therapy")} style={{flex:1,padding:"8px 0",background:K.teal,color:"#111",border:"none",borderRadius:8,fontWeight:700,fontSize:12,letterSpacing:"0.08em",cursor:"pointer"}}>
+                    ▶ THERAPY
+                  </button>
+                )}
+                <button onClick={()=>onSelect(u,"begin")} style={{flex:hasReady?1:"auto",width:hasReady?"auto":"100%",padding:"8px 14px",background:K.card,color:K.teal,border:`1px solid ${K.teal}`,borderRadius:8,fontWeight:700,fontSize:12,letterSpacing:"0.08em",cursor:"pointer"}}>
+                  {hasReady ? "↺ RE-TEST" : "BEGIN →"}
+                </button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {adding ? (
+        <div style={{background:K.card,borderRadius:12,padding:"16px 18px",border:`1px solid ${K.teal}44`,display:"flex",gap:10,alignItems:"center"}}>
+          <input autoFocus value={newName} onChange={e=>setNewName(e.target.value)}
+            onKeyDown={e=>e.key==="Enter"&&addUser()}
+            placeholder="Enter name…"
+            style={{flex:1,background:"#111",border:`1px solid ${K.teal}`,borderRadius:8,padding:"8px 12px",color:K.text,fontSize:14,outline:"none",fontFamily:"system-ui"}}
+          />
+          <button onClick={addUser} style={{padding:"8px 18px",background:K.teal,color:"#111",border:"none",borderRadius:8,fontWeight:700,fontSize:12,letterSpacing:"0.06em",cursor:"pointer"}}>ADD</button>
+          <button onClick={()=>{setAdding(false);setNewName("");}} style={{padding:"8px 12px",background:"transparent",color:K.muted,border:`1px solid ${K.muted}44`,borderRadius:8,cursor:"pointer",fontSize:16}}>✕</button>
+        </div>
+      ) : (
+        <button onClick={()=>setAdding(true)} style={{width:"100%",padding:"13px 0",background:"transparent",color:K.teal,border:`2px dashed ${K.teal}55`,borderRadius:12,fontWeight:700,fontSize:13,letterSpacing:"0.1em",cursor:"pointer",fontFamily:"'Courier New',monospace"}}>
+          + ADD PROFILE
+        </button>
+      )}
+    </div>
+  );
+}
+
 // ─── Intro ────────────────────────────────────────────────────────────────────
 // ─── Disclaimer ──────────────────────────────────────────────────────────────
 function Disclaimer({onAccept}) {
@@ -443,10 +536,7 @@ function Disclaimer({onAccept}) {
       <div style={{textAlign:"center"}}>
         <button
           disabled={!checked}
-          onClick={()=>{
-            try { sessionStorage.setItem("tinnitus_disclaimer_accepted","1"); } catch(_){}
-            onAccept();
-          }}
+          onClick={()=>{ onAccept(); }}
           style={{
             fontFamily:"system-ui",fontWeight:700,fontSize:15,letterSpacing:"0.12em",
             padding:"16px 52px",borderRadius:8,border:`1px solid ${checked?K.teal:K.border}`,
@@ -556,7 +646,6 @@ function Calibration({onConfirm, onSkip}) {
 
   const confirm = () => {
     stopCalTone();
-    try { localStorage.setItem("tinnitus_cal_date", new Date().toISOString().slice(0,10)); } catch(_){}
     onConfirm();
   };
 
@@ -710,7 +799,7 @@ function HearingTest({onComplete, onSkip}) {
     } else if (earIdx === 0) {
       setEarDone(true);
     } else {
-      onComplete(res);
+      onComplete(res, testMode);
     }
   };
 
@@ -1074,6 +1163,150 @@ const nearestThresh = (f, hRes) => {
   const R = hRes[`right_${nf}`] || 0;
   return { freq: nf, L, R, avg: (L+R)/2, cat: catFor((L+R)/2) };
 };
+
+// ─── History Screen ───────────────────────────────────────────────────────────
+const HIST_COLORS = ["#00d4b4","#ffa502","#fd79a8","#a29bfe","#26de81","#74b9ff"];
+function HistoryScreen({user}) {
+  const [tab, setTab] = useState("audiogram");
+  const audiograms = uGetJ(user.id,"audiograms",[]);
+  const tones      = uGetJ(user.id,"tones",[]);
+  const sessions   = uGetJ(user.id,"sessions",[]);
+  const totalMins  = sessions.reduce((a,s)=>a+(s.duration||0),0)/60;
+
+  const streak = (() => {
+    if (!sessions.length) return 0;
+    const days = [...new Set(sessions.map(s=>s.date.slice(0,10)))].sort().reverse();
+    const today = new Date().toISOString().slice(0,10);
+    const yest  = new Date(Date.now()-86400000).toISOString().slice(0,10);
+    if (days[0]!==today && days[0]!==yest) return 0;
+    let st = 1;
+    for (let i=1; i<days.length; i++) {
+      const diff = (new Date(days[i-1]) - new Date(days[i])) / 86400000;
+      if (diff <= 1) st++; else break;
+    }
+    return st;
+  })();
+
+  const AudiogramTab = () => {
+    const recent   = audiograms.slice(-6);
+    const allFreqs = [500,1000,2000,3000,4000,6000,8000];
+    const W=400, H=220, pl=40, pr=10, pt=18, pb=32;
+    const iw=W-pl-pr, ih=H-pt-pb;
+    const xOf = f  => pl + iw*Math.log2(f/250)/Math.log2(20000/250);
+    const yOf = db => pt + ih*(db+10)/120;
+    return (
+      <div style={{overflowX:"auto"}}>
+        {recent.length===0 && <div style={{color:K.muted,textAlign:"center",padding:40}}>No hearing tests recorded yet.</div>}
+        {recent.length>0 && (<>
+          <svg viewBox={`0 0 ${W} ${H}`} style={{width:"100%",maxWidth:W,display:"block",margin:"0 auto"}}>
+            {[-10,0,20,40,60,80,100].map(db=>(
+              <g key={db}>
+                <line x1={pl} x2={W-pr} y1={yOf(db)} y2={yOf(db)} stroke="#333" strokeWidth={db===0?1.2:0.5}/>
+                <text x={pl-4} y={yOf(db)+4} fontSize={8} fill={K.muted} textAnchor="end">{db}</text>
+              </g>
+            ))}
+            {allFreqs.map(f=>(
+              <g key={f}>
+                <line x1={xOf(f)} x2={xOf(f)} y1={pt} y2={H-pb} stroke="#333" strokeWidth={0.5}/>
+                <text x={xOf(f)} y={H-pb+12} fontSize={8} fill={K.muted} textAnchor="middle">{f>=1000?`${f/1000}k`:f}</text>
+              </g>
+            ))}
+            {recent.map((ag,i)=>{
+              const col  = HIST_COLORS[recent.length-1-i] || "#666";
+              const opac = 0.4 + (i/Math.max(recent.length-1,1))*0.6;
+              const newest = i===recent.length-1;
+              const lpts = allFreqs.filter(f=>ag.results&&ag.results[`left_${f}`]!=null).map(f=>`${xOf(f)},${yOf(ag.results[`left_${f}`])}`).join(" ");
+              const rpts = allFreqs.filter(f=>ag.results&&ag.results[`right_${f}`]!=null).map(f=>`${xOf(f)},${yOf(ag.results[`right_${f}`])}`).join(" ");
+              return (
+                <g key={i}>
+                  {lpts && <polyline points={lpts} fill="none" stroke={col} strokeWidth={newest?2:1.4} strokeOpacity={opac} strokeDasharray={newest?"none":"4,3"}/>}
+                  {rpts && <polyline points={rpts} fill="none" stroke={col} strokeWidth={newest?1.5:1} strokeOpacity={opac*0.7} strokeDasharray="2,2"/>}
+                </g>
+              );
+            })}
+            <text x={pl} y={pt-4} fontSize={8} fill={K.muted}>— left (solid)   - - right</text>
+          </svg>
+          <div style={{display:"flex",flexWrap:"wrap",gap:6,marginTop:8,justifyContent:"center"}}>
+            {recent.map((ag,i)=>(
+              <div key={i} style={{display:"flex",alignItems:"center",gap:5,fontSize:10,color:K.muted}}>
+                <div style={{width:16,height:3,background:HIST_COLORS[recent.length-1-i]||"#666",borderRadius:2}}/>
+                {new Date(ag.date).toLocaleDateString()} {ag.mode||""}
+              </div>
+            ))}
+          </div>
+        </>)}
+      </div>
+    );
+  };
+
+  const TonesTab = () => (
+    <div>
+      {tones.length===0 && <div style={{color:K.muted,textAlign:"center",padding:40}}>No tones selected yet.</div>}
+      {[...tones].reverse().map((t,i,arr)=>{
+        const prev = arr[i+1];
+        const pct  = prev && prev.freq ? Math.round((t.freq-prev.freq)/prev.freq*100) : null;
+        return (
+          <div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 0",borderBottom:"1px solid #222"}}>
+            <div>
+              <span style={{fontSize:18,fontWeight:700,color:K.teal}}>{t.freq} Hz</span>
+              <span style={{fontSize:11,color:K.muted,marginLeft:8}}>
+                {t.ear==="both"?"Both":t.ear==="left"?"Left":"Right"} · {t.vol||55} dB
+              </span>
+            </div>
+            <div style={{textAlign:"right"}}>
+              {pct!==null && <div style={{fontSize:11,color:pct>0?K.amber:pct<0?"#26de81":K.muted}}>{pct>0?"+":""}{pct}%</div>}
+              <div style={{fontSize:10,color:K.muted}}>{new Date(t.date).toLocaleDateString()}</div>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+
+  const SessionsTab = () => (
+    <div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:12,marginBottom:20}}>
+        {[{label:"SESSIONS",value:sessions.length},{label:"TOTAL",value:`${Math.round(totalMins)} min`},{label:"STREAK",value:`${streak} day${streak!==1?"s":""}`}].map(c=>(
+          <div key={c.label} style={{background:K.card,borderRadius:10,padding:"14px 8px",textAlign:"center",border:"1px solid #222"}}>
+            <div style={{fontSize:22,fontWeight:700,color:K.teal}}>{c.value}</div>
+            <div style={{fontSize:9,color:K.muted,letterSpacing:"0.1em",marginTop:2}}>{c.label}</div>
+          </div>
+        ))}
+      </div>
+      {sessions.length===0 && <div style={{color:K.muted,textAlign:"center",padding:24}}>No sessions yet.</div>}
+      {[...sessions].reverse().slice(0,50).map((s,i)=>(
+        <div key={i} style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:"1px solid #222",fontSize:13}}>
+          <span style={{color:K.text}}>{new Date(s.date).toLocaleString()}</span>
+          <span style={{color:K.teal}}>{Math.round((s.duration||0)/60)} min · {s.frequency} Hz</span>
+        </div>
+      ))}
+    </div>
+  );
+
+  return (
+    <div style={{animation:"up 0.3s ease",maxWidth:640,margin:"0 auto"}}>
+      <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:20}}>
+        <div style={{width:38,height:38,borderRadius:19,background:user.color,display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,fontWeight:700,color:"#111",flexShrink:0}}>
+          {user.name[0].toUpperCase()}
+        </div>
+        <div>
+          <div style={{fontWeight:700,fontSize:16,letterSpacing:"0.05em"}}>{user.name.toUpperCase()}</div>
+          <div style={{fontSize:11,color:K.muted}}>HISTORY &amp; PROGRESSION</div>
+        </div>
+      </div>
+      <div style={{display:"flex",gap:4,marginBottom:20,background:K.card,borderRadius:10,padding:4}}>
+        {["audiogram","tones","sessions"].map(t=>(
+          <button key={t} onClick={()=>setTab(t)} style={{flex:1,padding:"8px 0",background:tab===t?K.teal:"transparent",color:tab===t?"#111":K.muted,border:"none",borderRadius:7,fontWeight:700,fontSize:11,letterSpacing:"0.08em",cursor:"pointer",textTransform:"uppercase",fontFamily:"'Courier New',monospace"}}>
+            {t==="audiogram"?"AUDIOGRAM":t==="tones"?"TONES":"SESSIONS"}
+          </button>
+        ))}
+      </div>
+      {tab==="audiogram" && <AudiogramTab/>}
+      {tab==="tones"     && <TonesTab/>}
+      {tab==="sessions"  && <SessionsTab/>}
+    </div>
+  );
+}
 
 // ─── Tone Finder ──────────────────────────────────────────────────────────────
 function ToneFinder({hearingResults, onComplete}) {
@@ -1459,7 +1692,7 @@ function ToneFinder({hearingResults, onComplete}) {
 }
 
 // ─── Noise Therapy ────────────────────────────────────────────────────────────
-function NoiseTherapy({tinnitusFreq:initF, hearingResults, noiseTypeOnly}) {
+function NoiseTherapy({tinnitusFreq:initF, hearingResults, noiseTypeOnly, userId}) {
   const {f2s, s2f, SMAX} = logSlider(500, 20000);
 
   // Hearing-calibrated initial volume = threshold at tinnitus freq + 5 dB (just audible)
@@ -1489,9 +1722,7 @@ function NoiseTherapy({tinnitusFreq:initF, hearingResults, noiseTypeOnly}) {
   const [nDepth,   setNDepth]   = useState(30);
   const [sleepMins, setSleepMins] = useState(0); // 0 = off; auto-fade timer
   const [sleepEnded, setSleepEnded] = useState(false); // true after sleep timer fires
-  const [sessions, setSessions] = useState(() => {  // persistent session history
-    try { return JSON.parse(localStorage.getItem("tinnitus_sessions") || "[]"); } catch(_) { return []; }
-  });
+  const [sessions, setSessions] = useState(() => uGetJ(userId||"__guest","sessions",[]));
 
   const tfRef   = useRef(initF);
   const playRef = useRef(false); playRef.current = playing;
@@ -1614,14 +1845,15 @@ function NoiseTherapy({tinnitusFreq:initF, hearingResults, noiseTypeOnly}) {
     clearInterval(timerR.current);
     clearTimeout(sleepR.current);
     cancelAnimationFrame(animR.current);
-    // Save session to localStorage if it ran for > 30 s
+    // Save session if it ran for > 30 s
     const dur = elapsedRef.current;
     if (dur > 30) {
       try {
-        const saved = JSON.parse(localStorage.getItem("tinnitus_sessions") || "[]");
+        const _uid  = userId||"__guest";
+        const saved = uGetJ(_uid,"sessions",[]);
         saved.push({ date: new Date().toISOString(), duration: dur, frequency: tfRef.current });
         if (saved.length > 200) saved.splice(0, saved.length - 200);
-        localStorage.setItem("tinnitus_sessions", JSON.stringify(saved));
+        uSetJ(_uid,"sessions",saved);
         setSessions([...saved]);
       } catch(_) {}
     }
@@ -1954,10 +2186,13 @@ class ErrorBoundary extends Component {
 
 
 // ─── Nav Bar ─────────────────────────────────────────────────────────────────
-function NavBar({phase, onBack, onRestart}) {
-  const canBack = phase !== "intro" && phase !== "disclaimer" && phase !== "calibration";
+function NavBar({phase, currentUser, onBack, onRestart, onHistory, onSwitchUser}) {
+  const canBack     = !["accounts","disclaimer","intro"].includes(phase);
+  const showRestart = !["accounts","disclaimer","calibration","intro","history"].includes(phase);
+  const showHistory = currentUser && !["accounts","disclaimer","history"].includes(phase);
+  const showUser    = currentUser && phase !== "accounts";
   return (
-    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18}}>
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18,gap:8}}>
       <button onClick={onBack} style={{
         display:"flex",alignItems:"center",gap:6,
         padding:"7px 14px",background:"transparent",
@@ -1965,53 +2200,72 @@ function NavBar({phase, onBack, onRestart}) {
         borderRadius:6,color:canBack?K.muted:"transparent",
         fontFamily:"'Courier New',monospace",fontSize:14,
         cursor:canBack?"pointer":"default",transition:"all 0.15s",
-        pointerEvents:canBack?"auto":"none",
+        pointerEvents:canBack?"auto":"none",flexShrink:0,
       }}
         onMouseEnter={e=>canBack&&(e.currentTarget.style.borderColor=K.teal,e.currentTarget.style.color=K.teal)}
         onMouseLeave={e=>canBack&&(e.currentTarget.style.borderColor=K.border,e.currentTarget.style.color=K.muted)}
       >
         ← BACK
       </button>
-      {phase!=="intro" && phase!=="disclaimer" && phase!=="calibration" && (
-        <button onClick={onRestart} style={{
-          padding:"7px 14px",background:"transparent",
-          border:`1px solid ${K.border}`,borderRadius:6,
-          color:K.muted,fontFamily:"'Courier New',monospace",fontSize:14,
-          cursor:"pointer",transition:"all 0.15s",
-        }}
-          onMouseEnter={e=>(e.currentTarget.style.borderColor="#ff4757",e.currentTarget.style.color="#ff4757")}
-          onMouseLeave={e=>(e.currentTarget.style.borderColor=K.border,e.currentTarget.style.color=K.muted)}
-        >
-          ↺ START OVER
-        </button>
-      )}
+      <div style={{display:"flex",gap:8,alignItems:"center"}}>
+        {showHistory && (
+          <button onClick={onHistory} style={{padding:"7px 14px",background:"transparent",border:`1px solid ${K.border}`,borderRadius:6,color:K.muted,fontFamily:"'Courier New',monospace",fontSize:13,cursor:"pointer",transition:"all 0.15s"}}
+            onMouseEnter={e=>(e.currentTarget.style.borderColor=K.teal,e.currentTarget.style.color=K.teal)}
+            onMouseLeave={e=>(e.currentTarget.style.borderColor=K.border,e.currentTarget.style.color=K.muted)}
+          >
+            📊 HISTORY
+          </button>
+        )}
+        {showRestart && (
+          <button onClick={onRestart} style={{padding:"7px 14px",background:"transparent",border:`1px solid ${K.border}`,borderRadius:6,color:K.muted,fontFamily:"'Courier New',monospace",fontSize:13,cursor:"pointer",transition:"all 0.15s"}}
+            onMouseEnter={e=>(e.currentTarget.style.borderColor="#ff4757",e.currentTarget.style.color="#ff4757")}
+            onMouseLeave={e=>(e.currentTarget.style.borderColor=K.border,e.currentTarget.style.color=K.muted)}
+          >
+            ↺ RE-TEST
+          </button>
+        )}
+        {showUser && (
+          <button onClick={onSwitchUser} title="Switch user" style={{display:"flex",alignItems:"center",gap:7,padding:"5px 10px 5px 6px",background:"transparent",border:`1px solid ${currentUser.color}66`,borderRadius:20,cursor:"pointer",transition:"all 0.15s"}}
+            onMouseEnter={e=>(e.currentTarget.style.borderColor=currentUser.color)}
+            onMouseLeave={e=>(e.currentTarget.style.borderColor=currentUser.color+"66")}
+          >
+            <div style={{width:26,height:26,borderRadius:13,background:currentUser.color,display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:700,color:"#111"}}>
+              {currentUser.name[0].toUpperCase()}
+            </div>
+            <span style={{fontFamily:"'Courier New',monospace",fontSize:12,color:K.text,letterSpacing:"0.04em"}}>{currentUser.name.toUpperCase()}</span>
+          </button>
+        )}
+      </div>
     </div>
   );
 }
 
 // ─── Root ─────────────────────────────────────────────────────────────────────
 export default function App() {
-  const [phase, setPhase] = useState(() => {
-    try { return sessionStorage.getItem("tinnitus_disclaimer_accepted") ? "intro" : "disclaimer"; }
-    catch(_) { return "disclaimer"; }
-  });
-  // Audiogram + tinnitus frequency persist across browser/PWA sessions via localStorage
-  const [hRes, setHRes] = useState(() => {
-    try { const s = localStorage.getItem("tinnitus_audiogram"); return s ? JSON.parse(s) : null; } catch(_) { return null; }
-  });
-  const [tFreq, setTFreq] = useState(() => {
-    try { return parseInt(localStorage.getItem("tinnitus_freq"), 10) || 9400; } catch(_) { return 9400; }
-  });
-  const [tVol,        setTVol]      = useState(55);
-  const [tEar,        setTEar]      = useState("both");
-  const [noiseOnly,   setNoiseOnly] = useState(false);
+  const [currentUser, setCurrentUser] = useState(null);
+  const [phase,       setPhase]       = useState("accounts");
+  const [hRes,        setHRes]        = useState(null);
+  const [tFreq,       setTFreq]       = useState(9400);
+  const [tVol,        setTVol]        = useState(55);
+  const [tEar,        setTEar]        = useState("both");
+  const [noiseOnly,   setNoiseOnly]   = useState(false);
+  const [prevPhase,   setPrevPhase]   = useState("intro");
+
+  const uid = currentUser?.id;
+
+  const selectUser = (user, intent) => {
+    setCurrentUser(user);
+    const savedHRes  = uGetJ(user.id,"audiogram_latest",null);
+    const savedTFreq = parseInt(uGet(user.id,"freq")||"0",10)||9400;
+    setHRes(savedHRes); setTFreq(savedTFreq);
+    if (intent === "therapy" && savedHRes && savedTFreq) { setPhase("therapy"); return; }
+    if (uGet(user.id,"disclaimer") !== "1") { setPhase("disclaimer"); return; }
+    setPhase("intro");
+  };
 
   const goFromIntro = () => {
-    // Skip calibration if already done today, otherwise calibrate before hearing test
-    try {
-      const calDone = localStorage.getItem("tinnitus_cal_date") === new Date().toISOString().slice(0,10);
-      setPhase(calDone ? "tintype" : "calibration");
-    } catch(_) { setPhase("calibration"); }
+    const calDone = uid && uGet(uid,"cal_date") === new Date().toISOString().slice(0,10);
+    setPhase(calDone ? "tintype" : "calibration");
   };
 
   const goTherapy = (f, noiseType=false) => {
@@ -2020,10 +2274,11 @@ export default function App() {
 
   const restart = () => {
     setPhase("intro"); setHRes(null); setTFreq(9400); setTVol(55); setTEar("both"); setNoiseOnly(false);
-    try { localStorage.removeItem("tinnitus_audiogram"); localStorage.removeItem("tinnitus_freq"); } catch(_) {}
+    if (uid) { uDel(uid,"audiogram_latest"); uDel(uid,"freq"); }
   };
 
   const back = () => {
+    if (phase === "history") { setPhase(prevPhase); return; }
     const prev = {
       calibration: "intro",
       tintype:     "intro",
@@ -2036,50 +2291,68 @@ export default function App() {
     if (prev[phase]) setPhase(prev[phase]);
   };
 
+  const goHistory = () => { setPrevPhase(phase); setPhase("history"); };
+
   return (
     <div style={{minHeight:"100vh",background:K.bg,color:K.text,padding:"24px 16px max(60px,env(safe-area-inset-bottom,60px))"}}>
       <style>{CSS}</style>
       <div style={{maxWidth:700,margin:"0 auto"}}>
-        <NavBar phase={phase} onBack={back} onRestart={restart}/>
+        <NavBar phase={phase} currentUser={currentUser} onBack={back} onRestart={restart} onHistory={goHistory} onSwitchUser={()=>setPhase("accounts")}/>
         <ErrorBoundary>
-          {phase!=="intro"&&phase!=="tintype"&&phase!=="disclaimer"&&phase!=="calibration"&&<StepBar phase={phase}/>}
+          {phase!=="accounts"&&phase!=="intro"&&phase!=="tintype"&&phase!=="disclaimer"&&phase!=="calibration"&&phase!=="history"&&<StepBar phase={phase}/>}
 
-          {phase==="disclaimer"  &&<Disclaimer onAccept={()=>setPhase("intro")}/>}
+          {phase==="accounts"   && <AccountScreen onSelect={selectUser}/>}
 
-          {phase==="calibration" &&<Calibration onConfirm={()=>setPhase("tintype")} onSkip={()=>setPhase("tintype")}/>}
+          {phase==="history"    && currentUser && <HistoryScreen user={currentUser}/>}
 
-          {phase==="intro"       &&<Intro
+          {phase==="disclaimer" && <Disclaimer onAccept={()=>{ if(uid)uSet(uid,"disclaimer","1"); setPhase("intro"); }}/>}
+
+          {phase==="calibration"&& <Calibration onConfirm={()=>{ if(uid)uSet(uid,"cal_date",new Date().toISOString().slice(0,10)); setPhase("tintype"); }} onSkip={()=>setPhase("tintype")}/>}
+
+          {phase==="intro"      && <Intro
               savedData={hRes ? {freq: tFreq} : null}
               onResume={()=>setPhase("tone")}
               onStart={goFromIntro}
               onSkip={goFromIntro}/>}
 
-          {phase==="tintype"     &&<TinnitusTypeScreen
+          {phase==="tintype"    && <TinnitusTypeScreen
               onTonal={()=>setPhase("test")}
               onNoise={()=>goTherapy(9400, true)}
               onUnsure={()=>setPhase("test")}/>}
 
-          {phase==="test"        &&<HearingTest
-              onComplete={r=>{
+          {phase==="test"       && <HearingTest
+              onComplete={(r, mode)=>{
                 setHRes(r);
-                try { localStorage.setItem("tinnitus_audiogram", JSON.stringify(r)); } catch(_){}
+                if (uid) {
+                  uSet(uid,"audiogram_latest",JSON.stringify(r));
+                  const hist = uGetJ(uid,"audiograms",[]);
+                  hist.push({date:new Date().toISOString(), results:r, mode:mode||"standard"});
+                  if (hist.length>50) hist.splice(0,hist.length-50);
+                  uSetJ(uid,"audiograms",hist);
+                }
                 setPhase("testresults");
               }}
               onSkip={()=>setPhase("tone")}/>}
 
-          {phase==="testresults" &&<TestResults
+          {phase==="testresults"&& <TestResults
               results={hRes}
               onContinue={()=>setPhase("tone")}/>}
 
-          {phase==="tone"        &&<ToneFinder
+          {phase==="tone"       && <ToneFinder
               hearingResults={hRes}
               onComplete={(f, vol, ear) => {
-                setTFreq(f); setTVol(vol || 55); setTEar(ear || "both");
-                try { localStorage.setItem("tinnitus_freq", String(f)); } catch(_){}
+                setTFreq(f); setTVol(vol||55); setTEar(ear||"both");
+                if (uid) {
+                  uSet(uid,"freq",String(f));
+                  const hist = uGetJ(uid,"tones",[]);
+                  hist.push({date:new Date().toISOString(), freq:f, vol:vol||55, ear:ear||"both"});
+                  if (hist.length>100) hist.splice(0,hist.length-100);
+                  uSetJ(uid,"tones",hist);
+                }
                 setPhase("octavecheck");
               }}/>}
 
-          {phase==="octavecheck" &&<OctaveCheck
+          {phase==="octavecheck"&& <OctaveCheck
               freq={tFreq}
               vol={tVol}
               earRoute={tEar}
@@ -2087,12 +2360,14 @@ export default function App() {
               onOctaveUp={f=>goTherapy(f, false)}
               onOctaveDown={f=>goTherapy(f, false)}/>}
 
-          {phase==="therapy"     &&<NoiseTherapy
+          {phase==="therapy"    && <NoiseTherapy
               tinnitusFreq={tFreq}
               hearingResults={hRes}
-              noiseTypeOnly={noiseOnly}/>}
+              noiseTypeOnly={noiseOnly}
+              userId={uid}/>}
         </ErrorBoundary>
       </div>
     </div>
   );
 }
+
