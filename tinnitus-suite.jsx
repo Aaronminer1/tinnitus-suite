@@ -154,9 +154,12 @@ const CSS = `
     input[type=range]{height:10px;}
     input[type=range]::-webkit-slider-thumb{width:28px!important;height:28px!important;}
   }
-  /* ── Narrow screens: loosen grid cols, larger tap zones ───────────── */
+  /* ── Narrow screens: tighter padding, word wrap, reduced letter spacing ── */
   @media(max-width:480px){
-    body{font-size:16px;}
+    body{font-size:14px;}
+    *{letter-spacing:0.05em!important;word-break:break-word;overflow-wrap:break-word;}
+    input[type=range]{letter-spacing:0!important;}
+    .panel{padding:14px!important;border-radius:10px!important;}
   }
   /* ── iPhone/Android notch: honour safe area insets ─────────────── */
   #root{padding-bottom:env(safe-area-inset-bottom,0px);}
@@ -164,7 +167,7 @@ const CSS = `
 
 // ─── UI Atoms ─────────────────────────────────────────────────────────────────
 const Panel = ({ch, s, hi}) => (
-  <div style={{background:K.card,border:`1px solid ${hi||K.border}`,borderRadius:14,padding:22,animation:"up 0.3s ease",...s}}>
+  <div className="panel" style={{background:K.card,border:`1px solid ${hi||K.border}`,borderRadius:14,padding:22,animation:"up 0.3s ease",...s}}>
     {ch}
   </div>
 );
