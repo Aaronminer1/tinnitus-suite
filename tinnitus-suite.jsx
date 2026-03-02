@@ -1883,75 +1883,6 @@ class ErrorBoundary extends Component {
   }
 }
 
-// ─── Debug Overlay ────────────────────────────────────────────────────────────
-function DebugOverlay({phase, hRes, tFreq}) {
-  const [open, setOpen] = useState(false);
-  const [logs, setLogs] = useState([]);
-
-  useEffect(() => {
-    const origError = console.error;
-    const origWarn  = console.warn;
-    const push = (level, args) => {
-      const msg = args.map(a => typeof a === "object" ? JSON.stringify(a, null, 2) : String(a)).join(" ");
-      setLogs(prev => [{time: new Date().toISOString().slice(11,19), level, msg}, ...prev].slice(0, 40));
-    };
-    console.error = (...args) => { push("ERR", args); origError(...args); };
-    console.warn  = (...args) => { push("WARN", args); origWarn(...args); };
-    const onUnhandled = e => push("ERR", [`UnhandledRejection: ${e.reason}`]);
-    window.addEventListener("unhandledrejection", onUnhandled);
-    return () => {
-      console.error = origError;
-      console.warn  = origWarn;
-      window.removeEventListener("unhandledrejection", onUnhandled);
-    };
-  }, []);
-
-  useEffect(() => {
-    setLogs(prev => [{time:new Date().toISOString().slice(11,19), level:"INFO", msg:`Phase → ${phase}`}, ...prev].slice(0,40));
-  }, [phase]);
-
-  const colFor = lvl => lvl==="ERR"?"#ff4757":lvl==="WARN"?K.amber:"#00d4b4";
-
-  return (
-    <div style={{position:"fixed",bottom:12,right:12,zIndex:9999,fontFamily:"'Courier New',monospace"}}>
-      <button onClick={()=>setOpen(o=>!o)} style={{
-        padding:"6px 12px",background:"#0b0f1e",border:"1px solid #ff4757",
-        borderRadius:6,color:"#ff4757",fontSize:10,cursor:"pointer",letterSpacing:"0.1em",
-        boxShadow:logs.some(l=>l.level==="ERR")?"0 0 12px rgba(255,71,87,0.6)":"none",
-      }}>
-        🐛 DEBUG {logs.filter(l=>l.level==="ERR").length > 0 ? `(${logs.filter(l=>l.level==="ERR").length} ERR)` : ""}
-      </button>
-      {open && (
-        <div style={{position:"absolute",bottom:36,right:0,width:480,maxHeight:400,overflow:"auto",
-          background:"#07090f",border:"1px solid #ff4757",borderRadius:10,padding:16}}>
-          <div style={{display:"flex",justifyContent:"space-between",marginBottom:12}}>
-            <div style={{color:"#ff4757",fontSize:11,letterSpacing:"0.12em"}}>DEBUG CONSOLE</div>
-            <div style={{display:"flex",gap:8}}>
-              <button onClick={()=>setLogs([])} style={{padding:"2px 8px",background:"transparent",border:"1px solid #364d66",borderRadius:4,color:K.sub,cursor:"pointer",fontSize:9}}>CLEAR</button>
-              <button onClick={()=>setOpen(false)} style={{padding:"2px 8px",background:"transparent",border:"1px solid #364d66",borderRadius:4,color:K.sub,cursor:"pointer",fontSize:9}}>CLOSE</button>
-            </div>
-          </div>
-          <div style={{marginBottom:12,padding:"8px 10px",background:"#0c0f1c",borderRadius:6,fontSize:10,lineHeight:1.8}}>
-            <div style={{color:K.sub}}>phase: <span style={{color:K.teal}}>{phase}</span></div>
-            <div style={{color:K.sub}}>hearingResults: <span style={{color:K.teal}}>{hRes ? `${Object.keys(hRes).length} keys` : "null"}</span></div>
-            <div style={{color:K.sub}}>tinnitusFreq: <span style={{color:K.teal}}>{tFreq} Hz</span></div>
-            <div style={{color:K.sub}}>AudioContext: <span style={{color:K.teal}}>{typeof window.AudioContext !== "undefined" ? "✓ available" : "✗ missing"}</span></div>
-          </div>
-          {logs.length === 0
-            ? <div style={{color:K.sub,fontSize:10,textAlign:"center",padding:12}}>No log entries yet</div>
-            : logs.map((l,i) => (
-              <div key={i} style={{fontSize:9,lineHeight:1.7,padding:"4px 0",borderBottom:`1px solid ${K.dim}`,color:colFor(l.level)}}>
-                <span style={{color:K.sub,marginRight:8}}>{l.time}</span>
-                <span style={{marginRight:8}}>[{l.level}]</span>
-                <span style={{color:l.level==="INFO"?K.text:colFor(l.level),whiteSpace:"pre-wrap",wordBreak:"break-all"}}>{l.msg}</span>
-              </div>
-            ))
-          }
-        </div>
-      )}
-    </div>
-  );
-}
 
 // ─── Nav Bar ─────────────────────────────────────────────────────────────────
 function NavBar({phase, onBack, onRestart}) {
@@ -2077,7 +2008,6 @@ export default function App() {
               noiseTypeOnly={noiseOnly}/>}
         </ErrorBoundary>
       </div>
-      <DebugOverlay phase={phase} hRes={hRes} tFreq={tFreq}/>
     </div>
   );
 }
