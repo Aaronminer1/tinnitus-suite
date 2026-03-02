@@ -518,7 +518,7 @@ function Intro({onStart, onSkip, savedData, onResume}) {
 const CAL_GAIN = 0.10;
 
 function HearingTest({onComplete, onSkip}) {
-  const [audioDevice, setAudioDevice] = useState(null); // null | "headphones" | "speaker"
+  const [audioDevice] = useState("headphones"); // headphones only — speakers can't isolate ears
   const [calibrated,  setCalibrated]  = useState(() => {
     // Re-use calibration within the same day; still require it after cold launch
     try { const d = localStorage.getItem("tinnitus_cal_date"); return d === new Date().toISOString().slice(0,10); } catch(_) { return false; }
@@ -601,11 +601,11 @@ function HearingTest({onComplete, onSkip}) {
     g.gain.linearRampToValueAtTime(Math.max(1e-5, Math.pow(10,(db-85)/20)*0.6), ctx.currentTime+0.08);
     o.type = "sine"; o.frequency.value = freq;
     o.connect(g);
-    if (ctx.destination.channelCount >= 2 && audioDevice !== "speaker") {
-      // Per-ear routing — stereo headphones / earbuds only
+    if (ctx.destination.channelCount >= 2) {
+      // Per-ear routing — stereo headphones / earbuds
       const sp = ctx.createChannelSplitter(2), mg = ctx.createChannelMerger(2);
       g.connect(sp); sp.connect(mg, 0, ear==="left"?0:1); mg.connect(ctx.destination);
-    } else { g.connect(ctx.destination); } // speaker or mono: route to both ears
+    } else { g.connect(ctx.destination); } // mono fallback
     o.start(); osc.current = o; gn.current = g;
   };
 
@@ -613,14 +613,7 @@ function HearingTest({onComplete, onSkip}) {
     if (freqIdx < freqs.length-1) {
       setFreqIdx(freqIdx+1); setDB(60); setHwPhase("descend"); setStep("ready"); setLastAns(null);
     } else if (earIdx === 0) {
-      if (audioDevice === "speaker") {
-        // Speaker mode: only one pass — duplicate left results as right (binaural threshold)
-        const fullRes = {...res};
-        freqs.forEach(f => { if (fullRes[`left_${f}`] !== undefined) fullRes[`right_${f}`] = fullRes[`left_${f}`]; });
-        onComplete(fullRes);
-      } else {
-        setEarDone(true);
-      }
+      setEarDone(true);
     } else {
       onComplete(res);
     }
@@ -682,46 +675,10 @@ function HearingTest({onComplete, onSkip}) {
   const done = earIdx * freqs.length + freqIdx;
   const pct  = (done / (2*freqs.length)) * 100;
 
-  // ── Audio setup — what device is the user listening with? ─────────────────
-  if (!audioDevice) {
-    return (
-      <div style={{animation:"up 0.3s ease"}}>
-        <div style={{textAlign:"center",marginBottom:28}}>
-          <Big t="AUDIO SETUP"/>
-          <Lbl t="WHAT ARE YOU LISTENING WITH?" s={{textAlign:"center",marginTop:5,fontSize:14}}/>
-        </div>
-        <Lbl t="Your answer determines how the test runs and which ear-routing is used." s={{textAlign:"center",marginBottom:16,fontSize:13}}/>
-        {[
-          {id:"headphones", icon:"🎧", title:"Headphones or Earbuds", color:K.teal,
-           desc:"Over-ear, in-ear, or AirPods plugged into or connected to your device. Enables per-ear testing — most accurate results."},
-          {id:"speaker", icon:"🔊", title:"Device Speaker", color:K.amber,
-           desc:"Built-in laptop, tablet, or phone speaker. Both ears tested simultaneously — less precise, but still useful for setting therapy volume."},
-        ].map(opt=>(
-          <Panel key={opt.id} hi={opt.color+"44"} s={{marginBottom:10,cursor:"pointer"}} ch={
-            <div style={{display:"flex",gap:16,alignItems:"flex-start"}} onClick={()=>setAudioDevice(opt.id)}>
-              <div style={{fontSize:36,flexShrink:0,marginTop:2}}>{opt.icon}</div>
-              <div style={{flex:1}}>
-                <div style={{fontFamily:"system-ui",fontWeight:700,fontSize:15,color:opt.color,marginBottom:5}}>{opt.title}</div>
-                <Lbl t={opt.desc} s={{lineHeight:1.8,fontSize:14}}/>
-              </div>
-              <div style={{padding:"8px 14px",border:`1px solid ${opt.color}`,borderRadius:6,color:opt.color,fontFamily:"'Courier New',monospace",fontSize:14,flexShrink:0,alignSelf:"center"}}>SELECT →</div>
-            </div>
-          }/>
-        ))}
-        <div style={{textAlign:"center",marginTop:14}}>
-          <button onClick={onSkip} style={{fontFamily:"system-ui",fontSize:12,padding:"8px 24px",background:"transparent",border:`1px solid ${K.muted}`,borderRadius:7,color:K.muted,transition:"all 0.2s",letterSpacing:"0.1em"}}
-            onMouseEnter={e=>{e.currentTarget.style.borderColor=K.teal;e.currentTarget.style.color=K.teal;}}
-            onMouseLeave={e=>{e.currentTarget.style.borderColor=K.muted;e.currentTarget.style.color=K.muted;}}>
-            SKIP HEARING TEST → GO TO THERAPY
-          </button>
-        </div>
-      </div>
-    );
-  }
+  // ── Headphones required notice (device is always headphones) ─────────────
 
-  // ── Calibration screen — anchors system volume before any threshold measurement ──
+  // ── Calibration: anchors system volume before any threshold measurement ────
   if (!calibrated) {
-    const isHP = audioDevice === "headphones";
     return (
       <div style={{animation:"up 0.3s ease"}}>
         <div style={{textAlign:"center",marginBottom:24}}>
@@ -738,11 +695,11 @@ function HearingTest({onComplete, onSkip}) {
           <Lbl t="HOW TO CALIBRATE" c={K.teal} s={{marginBottom:14,fontSize:14}}/>
           <div style={{display:"flex",flexDirection:"column",gap:10}}>
             {[
-              {n:"1", t: isHP ? "Put on your headphones / earbuds" : "Place your device flat on a surface, speaker facing up"},
+              {n:"1", t: "Put on your headphones or earbuds"},
               {n:"2", t: "Set your device volume to the MINIMUM (mute or 0)"},
               {n:"3", t: "Press PLAY below — you will hear a soft 1 kHz reference tone"},
               {n:"4", t: "Slowly raise your system volume until the tone is JUST barely audible"},
-              {n:"5", t: isHP ? "Add 2–3 volume steps more so it's comfortably soft — not silent, not loud" : "Add 2–3 steps more until faint but clear at arm's length"},
+              {n:"5", t: "Add 2–3 volume steps more so it's comfortably soft — not silent, not loud"},
               {n:"6", t: "Press CONFIRM — do not change system volume for the rest of the test"},
             ].map(({n,t})=>(
               <div key={n} style={{display:"flex",gap:12,alignItems:"flex-start"}}>
@@ -784,7 +741,7 @@ function HearingTest({onComplete, onSkip}) {
 
         <Panel s={{marginBottom:14,borderColor:"#1e2a3e"}} ch={<>
           <Lbl t="⚠ IMPORTANT" c={K.amber} s={{marginBottom:6}}/>
-          <Lbl t={`After confirming, ${isHP?"keep the headphones on and":"keep the device in place —"} do not touch your system volume controls until the hearing test is finished. Changing volume mid-test corrupts your thresholds.`} s={{lineHeight:1.9,fontSize:14}}/>
+          <Lbl t="After confirming, keep the headphones on — do not touch your system volume controls until the hearing test is finished. Changing volume mid-test corrupts your thresholds." s={{lineHeight:1.9,fontSize:14}}/>
         </>}/>
 
         <button
@@ -794,10 +751,10 @@ function HearingTest({onComplete, onSkip}) {
         </button>
 
         <div style={{textAlign:"center"}}>
-          <button onClick={()=>setAudioDevice(null)} style={{fontFamily:"system-ui",fontSize:14,padding:"8px 20px",background:"transparent",border:`1px solid ${K.muted}`,borderRadius:7,color:K.muted,transition:"all 0.2s"}}
+          <button onClick={onSkip} style={{fontFamily:"system-ui",fontSize:14,padding:"8px 20px",background:"transparent",border:`1px solid ${K.muted}`,borderRadius:7,color:K.muted,transition:"all 0.2s"}}
             onMouseEnter={e=>{e.currentTarget.style.borderColor=K.teal;e.currentTarget.style.color=K.teal;}}
             onMouseLeave={e=>{e.currentTarget.style.borderColor=K.muted;e.currentTarget.style.color=K.muted;}}>
-            ← BACK TO DEVICE SELECTION
+            SKIP HEARING TEST → GO TO THERAPY
           </button>
         </div>
       </div>
@@ -856,8 +813,7 @@ function HearingTest({onComplete, onSkip}) {
     <div style={{animation:"up 0.3s ease"}}>
       <div style={{textAlign:"center",marginBottom:20}}>
         <Big t="PURE TONE AUDIOMETRY"/>
-        <Lbl t={audioDevice==="speaker" ? `◄► COMBINED · ${fLabel(freqs[freqIdx])}Hz · ${dB} dBHL` : `${EARS[earIdx]==="left"?"◄ LEFT EAR":"RIGHT EAR ►"} · ${fLabel(freqs[freqIdx])}Hz · ${dB} dBHL`} s={{textAlign:"center",marginTop:5,fontSize:14}}/>
-        {audioDevice==="speaker" && <Lbl t="⚠ Both ears combined — headphones give independent per-ear results" c={K.amber} s={{textAlign:"center",fontSize:12,marginTop:3}}/>}
+        <Lbl t={`${EARS[earIdx]==="left"?"◄ LEFT EAR":"RIGHT EAR ►"} · ${fLabel(freqs[freqIdx])}Hz · ${dB} dBHL`} s={{textAlign:"center",marginTop:5,fontSize:14}}/>
       </div>
 
       <Panel s={{marginBottom:14}} ch={<>
