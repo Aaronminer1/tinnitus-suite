@@ -260,7 +260,7 @@ function TinnitusTypeScreen({onTonal, onNoise, onUnsure}) {
       desc:"Your tinnitus changes character, has multiple tones, or you're not certain which category it fits.",
       color:K.amber,
       action: onUnsure,
-      btnLabel:"NOT SURE → HELP ME DECIDE",
+      btnLabel:"NOT SURE → DO HEARING TEST FIRST",
     },
   ];
   return (
@@ -401,6 +401,8 @@ function Disclaimer({onAccept}) {
   return (
     <div style={{animation:"up 0.4s ease",maxWidth:640,margin:"0 auto"}}>
       <div style={{textAlign:"center",marginBottom:28}}>
+        <Big t={<>TINNITUS <span style={{color:K.text}}>SUITE</span></>} sz={30} c={K.teal} s={{marginBottom:4}}/>
+        <Lbl t="HEARING ASSESSMENT & PERSONALISED SOUND THERAPY" s={{textAlign:"center",fontSize:12,marginBottom:20}}/>
         <div style={{fontSize:36,marginBottom:12}}>⚠️</div>
         <Big t="EXPERIMENTAL SOFTWARE" sz={26} c={K.amber} s={{marginBottom:6}}/>
         <Lbl t="IMPORTANT — PLEASE READ BEFORE USING" c={K.amber} s={{textAlign:"center",fontSize:14,letterSpacing:"0.16em"}}/>
@@ -472,7 +474,7 @@ function Intro({onStart, onSkip, savedData, onResume}) {
       <Panel s={{marginBottom:14}} ch={
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:20}}>
           {[
-            {n:"01",t:"HEARING TEST",d:"10-frequency pure tone audiometry for both ears with full audiogram"},
+            {n:"01",t:"HEARING TEST",d:"Multi-frequency pure tone audiometry for both ears with full audiogram (up to 16 kHz)"},
             {n:"02",t:"TONE FINDER", d:"Sweep and match the exact frequency of your tinnitus ringing"},
             {n:"03",t:"THERAPY",     d:"Notched noise calibrated to suppress your specific tinnitus frequency"},
           ].map(s=>(
@@ -487,7 +489,7 @@ function Intro({onStart, onSkip, savedData, onResume}) {
       <Panel s={{marginBottom:28,borderColor:"#2a1f0a"}} ch={<>
         <Lbl t="⚠ BEFORE YOU BEGIN" c={K.amber} s={{marginBottom:10}}/>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-          {["Wear headphones or earbuds — needed for per-ear testing","Find a quiet room free of background noise","Volume calibration is guided — don't pre-set it","This is a screening tool, not a medical diagnosis"].map(t=>(
+          {["Wear headphones or earbuds — needed for per-ear testing","Find a quiet room free of background noise","Volume calibration will be guided in the next step — leave device volume as-is","This is a screening tool, not a medical diagnosis"].map(t=>(
             <Lbl key={t} t={`▸ ${t}`} s={{lineHeight:1.8,fontSize:14}}/>
           ))}
         </div>
@@ -908,7 +910,7 @@ function HearingTest({onComplete, onSkip}) {
           </div>
           <div style={{flex:2,borderLeft:`1px solid ${K.dim}`,paddingLeft:20}}>
             <Lbl t="HOW IT WORKS" s={{marginBottom:8}}/>
-            <Lbl t="Starting at 60 dBHL and descending 10 dB each time you hear it. When you first miss, it rises in 5 dB steps — that converging level is your threshold. This Hughson-Westlake method matches clinical ISO 8253-1 audiometry. Headphone mode tests each ear independently; speaker mode runs one combined pass." s={{lineHeight:1.9,fontSize:13}}/>
+            <Lbl t="Starting at 60 dBHL and descending 10 dB each time you hear it. When you first miss, it rises in 5 dB steps — that converging level is your threshold. This Hughson-Westlake method matches clinical ISO 8253-1 audiometry. Each ear is tested independently." s={{lineHeight:1.9,fontSize:13}}/>
           </div>
         </div>
       }/>
@@ -956,24 +958,31 @@ function TestResults({results, onContinue}) {
 
           {["left","right"].map(ear=>{
             const col=ear==="left"?K.teal:"#fd79a8", sym=ear==="left"?"X":"O";
+            const logPct = (f) => Math.log2(f/rf[0]) / Math.log2(rf[rf.length-1]/rf[0]) * 100;
             return (
               <svg key={ear} style={{position:"absolute",left:34,top:0,width:"calc(100% - 34px)",height:"100%",overflow:"visible"}}>
                 {rf.map((f,fi)=>{
                   if(fi===0)return null;
                   const y1=(results[`${ear}_${rf[fi-1]}`]||0)/110*100;
                   const y2=(results[`${ear}_${f}`]||0)/110*100;
-                  return <line key={fi} x1={`${(fi-1)/(rf.length-1)*100}%`} y1={`${y1}%`} x2={`${fi/(rf.length-1)*100}%`} y2={`${y2}%`} stroke={col} strokeWidth="1.5" opacity="0.5"/>;
+                  return <line key={fi} x1={`${logPct(rf[fi-1])}%`} y1={`${y1}%`} x2={`${logPct(f)}%`} y2={`${y2}%`} stroke={col} strokeWidth="1.5" opacity="0.5"/>;
                 })}
                 {rf.map((f,fi)=>{
                   const yv=(results[`${ear}_${f}`]||0)/110*100;
-                  return <text key={fi} x={`${fi/(rf.length-1)*100}%`} y={`${yv}%`} textAnchor="middle" dominantBaseline="middle" fill={col} fontSize={rf.length>13?"9":"12"} fontWeight="bold">{sym}</text>;
+                  return <text key={fi} x={`${logPct(f)}%`} y={`${yv}%`} textAnchor="middle" dominantBaseline="middle" fill={col} fontSize={rf.length>13?"9":"12"} fontWeight="bold">{sym}</text>;
                 })}
               </svg>
             );
           })}
-          <div style={{position:"absolute",left:34,right:0,bottom:0,display:"flex",justifyContent:"space-between"}}>
-            {rf.map(f=><span key={f} style={{fontSize:7,color:K.sub,fontFamily:"'Courier New',monospace"}}>{f>=1000?`${f/1000}k`:f}</span>)}
+          {(()=>{ const logPct=(f)=>Math.log2(f/rf[0])/Math.log2(rf[rf.length-1]/rf[0])*100; return (
+          <div style={{position:"absolute",left:34,right:0,bottom:0}}>
+            {rf.map(f=>(
+              <span key={f} style={{position:"absolute",left:`${logPct(f)}%`,transform:"translateX(-50%)",fontSize:7,color:K.sub,fontFamily:"'Courier New',monospace"}}>
+                {f>=1000?`${f/1000}k`:f}
+              </span>
+            ))}
           </div>
+          );})()}
         </div>
         <div style={{display:"flex",gap:24,justifyContent:"center",marginTop:8}}>
           <Lbl t="✕ LEFT EAR" c={K.teal}/>
@@ -1012,10 +1021,12 @@ function TestResults({results, onContinue}) {
         </div>
       </>}/>
 
-      <Panel s={{marginBottom:20,borderColor:K.amber+"44"}} ch={<>
-        <Lbl t="⚠ NOTABLE FINDING" c={K.amber} s={{marginBottom:8}}/>
-        <Lbl t={<>Your highest threshold was at <span style={{color:K.text}}>{hzFmt(worstF)}</span> ({Math.round(worstV)} dBHL average). High-frequency loss frequently co-occurs with tinnitus. The tone finder will start here.</>} s={{lineHeight:1.9,fontSize:14}}/>
-      </>}/>
+      {worstV >= 25 && (
+        <Panel s={{marginBottom:20,borderColor:K.amber+"44"}} ch={<>
+          <Lbl t="⚠ NOTABLE FINDING" c={K.amber} s={{marginBottom:8}}/>
+          <Lbl t={<>Your highest threshold was at <span style={{color:K.text}}>{hzFmt(worstF)}</span> ({Math.round(worstV)} dBHL — {catFor(worstV).label}). High-frequency loss frequently co-occurs with tinnitus. The tone finder will start here.</>} s={{lineHeight:1.9,fontSize:14}}/>
+        </>}/>
+      )}
 
       <div style={{textAlign:"center"}}>
         <button onClick={onContinue} style={{fontFamily:"system-ui",fontWeight:700,fontSize:14,letterSpacing:"0.12em",padding:"16px 48px",background:"rgba(0,212,180,0.08)",border:`1px solid ${K.teal}`,borderRadius:8,color:K.teal}}>CONTINUE TO TONE FINDER →</button>
@@ -1457,6 +1468,7 @@ function NoiseTherapy({tinnitusFreq:initF, hearingResults, noiseTypeOnly}) {
   // ERB-scaled notch width — auto-calculated, no user guess needed
   const [nDepth,   setNDepth]   = useState(30);
   const [sleepMins, setSleepMins] = useState(0); // 0 = off; auto-fade timer
+  const [sleepEnded, setSleepEnded] = useState(false); // true after sleep timer fires
   const [sessions, setSessions] = useState(() => {  // persistent session history
     try { return JSON.parse(localStorage.getItem("tinnitus_sessions") || "[]"); } catch(_) { return []; }
   });
@@ -1597,7 +1609,7 @@ function NoiseTherapy({tinnitusFreq:initF, hearingResults, noiseTypeOnly}) {
   };
 
   const startPlaying = (tf) => {
-    setElapsed(0);
+    setElapsed(0); setSleepEnded(false);
     buildGraph(ntRef.current,volRef.current,ndRef.current,tf||tfRef.current);
     timerR.current = setInterval(()=>setElapsed(e=>e+1),1000);
     clearTimeout(sleepR.current);
@@ -1606,7 +1618,7 @@ function NoiseTherapy({tinnitusFreq:initF, hearingResults, noiseTypeOnly}) {
         if (gainR.current && ac.current) {
           try { gainR.current.gain.linearRampToValueAtTime(0, ac.current.currentTime + 4); } catch(_){}
         }
-        setTimeout(() => stop(), 4200);
+        setTimeout(() => { stop(); setSleepEnded(true); }, 4200);
       }, sleepMins * 60 * 1000);
     }
     drawCanvas(); setPlaying(true);
@@ -1635,8 +1647,9 @@ function NoiseTherapy({tinnitusFreq:initF, hearingResults, noiseTypeOnly}) {
     debR.current=setTimeout(()=>restart(f),280);
   };
 
-  const fineTune = (delta) => {
-    const f=Math.max(500,Math.min(20000,tfRef.current+delta));
+  // Cent-based fine-tune — perceptually uniform at all frequencies
+  const fineTune = (cents) => {
+    const f = Math.max(500, Math.min(20000, Math.round(tfRef.current * Math.pow(2, cents / 1200))));
     tfRef.current=f; setDispF(f);
     if(slRef.current){slRef.current.value=f2s(f);setSliderGrad(slRef.current,f2s(f)/SMAX*100,K.red);}
     clearTimeout(debR.current);
@@ -1717,12 +1730,12 @@ function NoiseTherapy({tinnitusFreq:initF, hearingResults, noiseTypeOnly}) {
             {["500Hz","1kHz","2kHz","4kHz","8kHz","12kHz","16kHz","20kHz"].map(l=><span key={l}>{l}</span>)}
           </div>
           <div style={{display:"grid",gridTemplateColumns:"repeat(6,1fr)",gap:5}}>
-            {[{l:"-1k",d:-1000},{l:"-100",d:-100},{l:"-10",d:-10},{l:"+10",d:+10},{l:"+100",d:+100},{l:"+1k",d:+1000}].map(({l,d})=>(
-              <button key={l} onClick={()=>fineTune(d)}
+            {[{l:"−oct",c:-1200},{l:"−semi",c:-100},{l:"−10¢",c:-10},{l:"+10¢",c:10},{l:"+semi",c:100},{l:"+oct",c:1200}].map(({l,c})=>(
+              <button key={l} onClick={()=>fineTune(c)}
                 style={{padding:"8px 2px",background:"transparent",border:`1px solid ${K.border}`,borderRadius:5,color:K.muted,fontSize:13,fontFamily:"'Courier New',monospace",transition:"all 0.15s"}}
                 onMouseEnter={e=>{e.currentTarget.style.borderColor=K.red;e.currentTarget.style.color=K.red;}}
                 onMouseLeave={e=>{e.currentTarget.style.borderColor=K.border;e.currentTarget.style.color=K.muted;}}>
-                {l}Hz
+                {l}
               </button>
             ))}
           </div>
@@ -1761,6 +1774,11 @@ function NoiseTherapy({tinnitusFreq:initF, hearingResults, noiseTypeOnly}) {
                 ))}
               </div>
             </div>
+            {sleepEnded && !playing && (
+              <div style={{marginTop:10,padding:"8px 12px",background:"rgba(0,212,180,0.07)",border:"1px solid rgba(0,212,180,0.3)",borderRadius:6,textAlign:"center",fontFamily:"'Courier New',monospace",fontSize:13,color:K.teal}}>
+                ✓ SLEEP TIMER — SESSION ENDED · Tap ▶ to start a new session
+              </div>
+            )}
           </div>
         </div>
       }/>
@@ -1954,13 +1972,8 @@ function NavBar({phase, onBack, onRestart}) {
 // ─── Root ─────────────────────────────────────────────────────────────────────
 export default function App() {
   const [phase, setPhase] = useState(() => {
-    try {
-      const disclaimerDone = sessionStorage.getItem("tinnitus_disclaimer_accepted");
-      if (!disclaimerDone) return "disclaimer";
-      const today = new Date().toISOString().slice(0,10);
-      const calDone = localStorage.getItem("tinnitus_cal_date") === today;
-      return calDone ? "intro" : "calibration";
-    } catch(_) { return "disclaimer"; }
+    try { return sessionStorage.getItem("tinnitus_disclaimer_accepted") ? "intro" : "disclaimer"; }
+    catch(_) { return "disclaimer"; }
   });
   // Audiogram + tinnitus frequency persist across browser/PWA sessions via localStorage
   const [hRes, setHRes] = useState(() => {
@@ -1973,6 +1986,14 @@ export default function App() {
   const [tEar,        setTEar]      = useState("both");
   const [noiseOnly,   setNoiseOnly] = useState(false);
 
+  const goFromIntro = () => {
+    // Skip calibration if already done today, otherwise calibrate before hearing test
+    try {
+      const calDone = localStorage.getItem("tinnitus_cal_date") === new Date().toISOString().slice(0,10);
+      setPhase(calDone ? "tintype" : "calibration");
+    } catch(_) { setPhase("calibration"); }
+  };
+
   const goTherapy = (f, noiseType=false) => {
     setTFreq(f); setNoiseOnly(noiseType); setPhase("therapy");
   };
@@ -1984,7 +2005,7 @@ export default function App() {
 
   const back = () => {
     const prev = {
-      calibration: "disclaimer",
+      calibration: "intro",
       tintype:     "intro",
       test:        "tintype",
       testresults: "test",
@@ -2003,14 +2024,14 @@ export default function App() {
         <ErrorBoundary>
           {phase!=="intro"&&phase!=="tintype"&&phase!=="disclaimer"&&phase!=="calibration"&&<StepBar phase={phase}/>}
 
-          {phase==="disclaimer"  &&<Disclaimer onAccept={()=>setPhase("calibration")}/>}
+          {phase==="disclaimer"  &&<Disclaimer onAccept={()=>setPhase("intro")}/>}
 
-          {phase==="calibration" &&<Calibration onConfirm={()=>setPhase("intro")} onSkip={()=>setPhase("intro")}/>}
+          {phase==="calibration" &&<Calibration onConfirm={()=>setPhase("tintype")} onSkip={()=>setPhase("tintype")}/>}
 
           {phase==="intro"       &&<Intro
               savedData={hRes ? {freq: tFreq} : null}
               onResume={()=>setPhase("tone")}
-              onStart={()=>setPhase("tintype")}
+              onStart={goFromIntro}
               onSkip={()=>setPhase("tintype")}/>}
 
           {phase==="tintype"     &&<TinnitusTypeScreen
