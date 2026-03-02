@@ -511,49 +511,17 @@ function Intro({onStart, onSkip, savedData, onResume}) {
   );
 }
 
-// ─── Hearing Test ─────────────────────────────────────────────────────────────
-// Calibration reference gain — played at this level, user raises system volume
-// until tone is barely audible. Anchors all threshold measurements to that volume.
-// dBtoG(40) = 10^((40-60)/20) = 0.10  (intentionally soft)
+// ─── Calibration ─────────────────────────────────────────────────────────────
+// Anchors all dBHL measurements to a fixed output level.
+// CAL_GAIN = 0.10 ≡ –20 dBFS; user raises device volume until tone is just audible.
 const CAL_GAIN = 0.10;
 
-function HearingTest({onComplete, onSkip}) {
-  const [audioDevice] = useState("headphones"); // headphones only — speakers can't isolate ears
-  const [calibrated,  setCalibrated]  = useState(() => {
-    // Re-use calibration within the same day; still require it after cold launch
-    try { const d = localStorage.getItem("tinnitus_cal_date"); return d === new Date().toISOString().slice(0,10); } catch(_) { return false; }
-  });
-  const [calPlaying,  setCalPlaying]  = useState(false);
+function Calibration({onConfirm, onSkip}) {
+  const [calPlaying, setCalPlaying] = useState(false);
   const calAc  = useRef(null);
   const calOsc = useRef(null);
   const calGn  = useRef(null);
-  const [testMode, setTestMode] = useState(null); // null = show resolver screen first
-  const [earIdx,  setEarIdx]  = useState(0);
-  const [freqIdx, setFreqIdx] = useState(0);
-  const [dB,      setDB]      = useState(60); // 60 dBHL start (better centre for tinnitus population)
-  const [results, setResults] = useState({});
-  const [step,    setStep]    = useState("ready");
-  const [cdCount, setCdCount] = useState(null);
-  const [lastAns, setLastAns] = useState(null);
-  const [earDone, setEarDone] = useState(false);
-  const [hwPhase, setHwPhase] = useState("descend"); // Hughson-Westlake: descend→ascend bracketing
 
-  // Active frequency list — derived from selected mode, used by all functions below
-  const freqs  = testMode ? TEST_MODES.find(m=>m.id===testMode).freqs : FREQ_STANDARD;
-  const fLabel = (f) => f >= 1000 ? `${(f/1000).toFixed(f%1000===0?0:1)}k` : `${f}`;
-
-  const ac  = useRef(null);
-  const osc = useRef(null);
-  const gn  = useRef(null);
-  const tmr = useRef(null);
-
-  const audio = () => {
-    if (!ac.current) ac.current = mkCtx();
-    if (ac.current.state === "suspended") ac.current.resume();
-    return ac.current;
-  };
-
-  // Calibration tone helpers
   const startCalTone = () => {
     if (!calAc.current) calAc.current = mkCtx();
     if (calAc.current.state === "suspended") calAc.current.resume();
@@ -578,10 +546,125 @@ function HearingTest({onComplete, onSkip}) {
     setCalPlaying(false);
   };
 
-  const confirmCalibration = () => {
+  const confirm = () => {
     stopCalTone();
     try { localStorage.setItem("tinnitus_cal_date", new Date().toISOString().slice(0,10)); } catch(_){}
-    setCalibrated(true);
+    onConfirm();
+  };
+
+  useEffect(() => () => {
+    try { calOsc.current && calOsc.current.stop(); } catch(_){}
+    try { calAc.current && calAc.current.close(); } catch(_){}
+  }, []);
+
+  return (
+    <div style={{animation:"up 0.3s ease"}}>
+      <div style={{textAlign:"center",marginBottom:24}}>
+        <Big t="VOLUME CALIBRATION"/>
+        <Lbl t="SET SYSTEM VOLUME BEFORE TESTING" s={{textAlign:"center",marginTop:5,fontSize:14}}/>
+      </div>
+
+      <Panel s={{marginBottom:14,borderColor:K.amber+"55"}} ch={<>
+        <Lbl t="⚠ WHY THIS MATTERS" c={K.amber} s={{marginBottom:8}}/>
+        <Lbl t="Hearing thresholds (dBHL) are only meaningful relative to a fixed output level. Without this step, the same score could appear at wildly different system volumes — making the audiogram unreliable for calibrating your therapy volume." s={{lineHeight:1.9,fontSize:14}}/>
+      </>}/>
+
+      <Panel s={{marginBottom:14}} ch={<>
+        <Lbl t="HOW TO CALIBRATE" c={K.teal} s={{marginBottom:14,fontSize:14}}/>
+        <div style={{display:"flex",flexDirection:"column",gap:10}}>
+          {[
+            {n:"1", t: "Put on your headphones or earbuds"},
+            {n:"2", t: "Set your device volume to the MINIMUM (mute or 0)"},
+            {n:"3", t: "Press PLAY below — you will hear a soft 1 kHz reference tone"},
+            {n:"4", t: "Slowly raise your system volume until the tone is JUST barely audible"},
+            {n:"5", t: "Add 2–3 volume steps more so it's comfortably soft — not silent, not loud"},
+            {n:"6", t: "Press CONFIRM — do not change system volume for the rest of the session"},
+          ].map(({n,t})=>(
+            <div key={n} style={{display:"flex",gap:12,alignItems:"flex-start"}}>
+              <div style={{width:24,height:24,borderRadius:"50%",border:`1px solid ${K.teal}`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,fontFamily:"'Courier New',monospace",fontSize:14,color:K.teal}}>{n}</div>
+              <Lbl t={t} s={{lineHeight:1.8,fontSize:14,paddingTop:3}}/>
+            </div>
+          ))}
+        </div>
+
+        {/* Reference tone player */}
+        <div style={{marginTop:22,padding:"20px",background:K.dim,borderRadius:10,textAlign:"center"}}>
+          <Lbl t="1 kHz REFERENCE TONE" c={K.teal} s={{marginBottom:12,fontSize:14}}/>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:16,marginBottom:12}}>
+            <button
+              onClick={calPlaying ? stopCalTone : startCalTone}
+              style={{width:64,height:64,borderRadius:"50%",fontSize:24,
+                background:calPlaying?"rgba(0,212,180,0.15)":"rgba(0,212,180,0.05)",
+                border:`2px solid ${calPlaying?K.teal:K.border}`,
+                color:calPlaying?K.teal:K.muted,
+                animation:calPlaying?"glow 2s ease-in-out infinite":"none",transition:"all 0.2s"}}>
+              {calPlaying ? "⏹" : "▶"}
+            </button>
+            <div style={{textAlign:"left"}}>
+              <Lbl t={calPlaying ? "PLAYING — raise system volume now" : "Tap to play reference tone"} c={calPlaying?K.teal:K.muted} s={{fontSize:14,marginBottom:4}}/>
+              {calPlaying && (
+                <div style={{display:"flex",gap:4,alignItems:"flex-end",height:20}}>
+                  {[0,1,2,3,4].map(i=>(
+                    <div key={i} style={{width:5,background:K.teal,borderRadius:2,
+                      animation:`bar ${0.4+i*0.1}s ease-in-out infinite`,animationDelay:`${i*0.07}s`,
+                      height:`${10+i*3}px`,transformOrigin:"bottom",opacity:0.7}}/>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+          <Lbl t="Fixed reference: 1 kHz · gain = –20 dBFS · plays continuously until you stop it" s={{fontSize:12,color:K.sub}}/>
+        </div>
+      </>}/>
+
+      <Panel s={{marginBottom:14,borderColor:"#1e2a3e"}} ch={<>
+        <Lbl t="⚠ IMPORTANT" c={K.amber} s={{marginBottom:6}}/>
+        <Lbl t="After confirming, keep the headphones on — do not touch your system volume controls until the hearing test is finished. Changing volume mid-test corrupts your thresholds." s={{lineHeight:1.9,fontSize:14}}/>
+      </>}/>
+
+      <button
+        onClick={confirm}
+        style={{width:"100%",padding:"16px",background:"rgba(0,212,180,0.09)",border:`1px solid ${K.teal}`,borderRadius:8,color:K.teal,fontFamily:"system-ui",fontWeight:700,fontSize:14,letterSpacing:"0.12em",marginBottom:12}}>
+        ✓ VOLUME SET — CONFIRM &amp; CONTINUE
+      </button>
+
+      <div style={{textAlign:"center"}}>
+        <button onClick={onSkip} style={{fontFamily:"system-ui",fontSize:14,padding:"8px 20px",background:"transparent",border:`1px solid ${K.muted}`,borderRadius:7,color:K.muted,transition:"all 0.2s"}}
+          onMouseEnter={e=>{e.currentTarget.style.borderColor=K.teal;e.currentTarget.style.color=K.teal;}}
+          onMouseLeave={e=>{e.currentTarget.style.borderColor=K.muted;e.currentTarget.style.color=K.muted;}}>
+          SKIP CALIBRATION → CONTINUE
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Hearing Test ─────────────────────────────────────────────────────────────
+function HearingTest({onComplete, onSkip}) {
+  const [testMode, setTestMode] = useState(null); // null = show resolver screen first
+  const [earIdx,  setEarIdx]  = useState(0);
+  const [freqIdx, setFreqIdx] = useState(0);
+  const [dB,      setDB]      = useState(60); // 60 dBHL start (better centre for tinnitus population)
+  const [results, setResults] = useState({});
+  const [step,    setStep]    = useState("ready");
+  const [cdCount, setCdCount] = useState(null);
+  const [lastAns, setLastAns] = useState(null);
+  const [earDone, setEarDone] = useState(false);
+  const [hwPhase, setHwPhase] = useState("descend"); // Hughson-Westlake: descend→ascend bracketing
+
+  // Active frequency list — derived from selected mode, used by all functions below
+  const freqs  = testMode ? TEST_MODES.find(m=>m.id===testMode).freqs : FREQ_STANDARD;
+  const fLabel = (f) => f >= 1000 ? `${(f/1000).toFixed(f%1000===0?0:1)}k` : `${f}`;
+
+  const ac  = useRef(null);
+  const osc = useRef(null);
+  const gn  = useRef(null);
+  const tmr = useRef(null);
+
+  const audio = () => {
+    if (!ac.current) ac.current = mkCtx();
+    if (ac.current.state === "suspended") ac.current.resume();
+    return ac.current;
   };
 
   const stopTone = () => {
@@ -668,98 +751,10 @@ function HearingTest({onComplete, onSkip}) {
   useEffect(() => () => {
     clearTimeout(tmr.current);
     try { osc.current && osc.current.stop(); } catch(_){}
-    try { calOsc.current && calOsc.current.stop(); } catch(_){}
-    try { calAc.current && calAc.current.close(); } catch(_){}
   }, []);
 
   const done = earIdx * freqs.length + freqIdx;
   const pct  = (done / (2*freqs.length)) * 100;
-
-  // ── Headphones required notice (device is always headphones) ─────────────
-
-  // ── Calibration: anchors system volume before any threshold measurement ────
-  if (!calibrated) {
-    return (
-      <div style={{animation:"up 0.3s ease"}}>
-        <div style={{textAlign:"center",marginBottom:24}}>
-          <Big t="VOLUME CALIBRATION"/>
-          <Lbl t="SET SYSTEM VOLUME BEFORE TESTING" s={{textAlign:"center",marginTop:5,fontSize:14}}/>
-        </div>
-
-        <Panel s={{marginBottom:14,borderColor:K.amber+"55"}} ch={<>
-          <Lbl t="⚠ WHY THIS MATTERS" c={K.amber} s={{marginBottom:8}}/>
-          <Lbl t="Hearing thresholds (dBHL) are only meaningful relative to a fixed output level. Without this step, the same score could appear at wildly different system volumes — making the audiogram unreliable for calibrating your therapy volume." s={{lineHeight:1.9,fontSize:14}}/>
-        </>}/>
-
-        <Panel s={{marginBottom:14}} ch={<>
-          <Lbl t="HOW TO CALIBRATE" c={K.teal} s={{marginBottom:14,fontSize:14}}/>
-          <div style={{display:"flex",flexDirection:"column",gap:10}}>
-            {[
-              {n:"1", t: "Put on your headphones or earbuds"},
-              {n:"2", t: "Set your device volume to the MINIMUM (mute or 0)"},
-              {n:"3", t: "Press PLAY below — you will hear a soft 1 kHz reference tone"},
-              {n:"4", t: "Slowly raise your system volume until the tone is JUST barely audible"},
-              {n:"5", t: "Add 2–3 volume steps more so it's comfortably soft — not silent, not loud"},
-              {n:"6", t: "Press CONFIRM — do not change system volume for the rest of the test"},
-            ].map(({n,t})=>(
-              <div key={n} style={{display:"flex",gap:12,alignItems:"flex-start"}}>
-                <div style={{width:24,height:24,borderRadius:"50%",border:`1px solid ${K.teal}`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,fontFamily:"'Courier New',monospace",fontSize:14,color:K.teal}}>{n}</div>
-                <Lbl t={t} s={{lineHeight:1.8,fontSize:14,paddingTop:3}}/>
-              </div>
-            ))}
-          </div>
-
-          {/* Reference tone player */}
-          <div style={{marginTop:22,padding:"20px",background:K.dim,borderRadius:10,textAlign:"center"}}>
-            <Lbl t="1 kHz REFERENCE TONE" c={K.teal} s={{marginBottom:12,fontSize:14}}/>
-            <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:16,marginBottom:12}}>
-              <button
-                onClick={calPlaying ? stopCalTone : startCalTone}
-                style={{width:64,height:64,borderRadius:"50%",fontSize:24,
-                  background:calPlaying?"rgba(0,212,180,0.15)":"rgba(0,212,180,0.05)",
-                  border:`2px solid ${calPlaying?K.teal:K.border}`,
-                  color:calPlaying?K.teal:K.muted,
-                  animation:calPlaying?"glow 2s ease-in-out infinite":"none",transition:"all 0.2s"}}>
-                {calPlaying ? "⏹" : "▶"}
-              </button>
-              <div style={{textAlign:"left"}}>
-                <Lbl t={calPlaying ? "PLAYING — raise system volume now" : "Tap to play reference tone"} c={calPlaying?K.teal:K.muted} s={{fontSize:14,marginBottom:4}}/>
-                {calPlaying && (
-                  <div style={{display:"flex",gap:4,alignItems:"flex-end",height:20}}>
-                    {[0,1,2,3,4].map(i=>(
-                      <div key={i} style={{width:5,background:K.teal,borderRadius:2,
-                        animation:`bar ${0.4+i*0.1}s ease-in-out infinite`,animationDelay:`${i*0.07}s`,
-                        height:`${10+i*3}px`,transformOrigin:"bottom",opacity:0.7}}/>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-            <Lbl t="Fixed reference: 1 kHz · gain = –20 dBFS · plays continuously until you stop it" s={{fontSize:12,color:K.sub}}/>
-          </div>
-        </>}/>
-
-        <Panel s={{marginBottom:14,borderColor:"#1e2a3e"}} ch={<>
-          <Lbl t="⚠ IMPORTANT" c={K.amber} s={{marginBottom:6}}/>
-          <Lbl t="After confirming, keep the headphones on — do not touch your system volume controls until the hearing test is finished. Changing volume mid-test corrupts your thresholds." s={{lineHeight:1.9,fontSize:14}}/>
-        </>}/>
-
-        <button
-          onClick={confirmCalibration}
-          style={{width:"100%",padding:"16px",background:"rgba(0,212,180,0.09)",border:`1px solid ${K.teal}`,borderRadius:8,color:K.teal,fontFamily:"system-ui",fontWeight:700,fontSize:14,letterSpacing:"0.12em",marginBottom:12}}>
-          ✓ VOLUME SET — CONFIRM &amp; START TEST
-        </button>
-
-        <div style={{textAlign:"center"}}>
-          <button onClick={onSkip} style={{fontFamily:"system-ui",fontSize:14,padding:"8px 20px",background:"transparent",border:`1px solid ${K.muted}`,borderRadius:7,color:K.muted,transition:"all 0.2s"}}
-            onMouseEnter={e=>{e.currentTarget.style.borderColor=K.teal;e.currentTarget.style.color=K.teal;}}
-            onMouseLeave={e=>{e.currentTarget.style.borderColor=K.muted;e.currentTarget.style.color=K.muted;}}>
-            SKIP HEARING TEST → GO TO THERAPY
-          </button>
-        </div>
-      </div>
-    );
-  }
 
   // ── Mode chooser — shown before first tone ────────────────────────────────
   if (!testMode) {
@@ -1912,7 +1907,7 @@ class ErrorBoundary extends Component {
 
 // ─── Nav Bar ─────────────────────────────────────────────────────────────────
 function NavBar({phase, onBack, onRestart}) {
-  const canBack = phase !== "intro" && phase !== "tintype" && phase !== "disclaimer";
+  const canBack = phase !== "intro" && phase !== "tintype" && phase !== "disclaimer" && phase !== "calibration";
   return (
     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18}}>
       <button onClick={onBack} style={{
@@ -1929,7 +1924,7 @@ function NavBar({phase, onBack, onRestart}) {
       >
         ← BACK
       </button>
-      {phase!=="intro" && phase!=="disclaimer" && (
+      {phase!=="intro" && phase!=="disclaimer" && phase!=="calibration" && (
         <button onClick={onRestart} style={{
           padding:"7px 14px",background:"transparent",
           border:`1px solid ${K.border}`,borderRadius:6,
@@ -1949,9 +1944,13 @@ function NavBar({phase, onBack, onRestart}) {
 // ─── Root ─────────────────────────────────────────────────────────────────────
 export default function App() {
   const [phase, setPhase] = useState(() => {
-    // Show disclaimer every session (sessionStorage clears when app is closed)
-    try { return sessionStorage.getItem("tinnitus_disclaimer_accepted") ? "intro" : "disclaimer"; }
-    catch(_) { return "disclaimer"; }
+    try {
+      const disclaimerDone = sessionStorage.getItem("tinnitus_disclaimer_accepted");
+      if (!disclaimerDone) return "disclaimer";
+      const today = new Date().toISOString().slice(0,10);
+      const calDone = localStorage.getItem("tinnitus_cal_date") === today;
+      return calDone ? "intro" : "calibration";
+    } catch(_) { return "disclaimer"; }
   });
   // Audiogram + tinnitus frequency persist across browser/PWA sessions via localStorage
   const [hRes, setHRes] = useState(() => {
@@ -1975,6 +1974,7 @@ export default function App() {
 
   const back = () => {
     const prev = {
+      calibration: "disclaimer",
       tintype:     "intro",
       test:        "tintype",
       testresults: "test",
@@ -1991,9 +1991,11 @@ export default function App() {
       <div style={{maxWidth:700,margin:"0 auto"}}>
         <NavBar phase={phase} onBack={back} onRestart={restart}/>
         <ErrorBoundary>
-          {phase!=="intro"&&phase!=="tintype"&&phase!=="disclaimer"&&<StepBar phase={phase}/>}
+          {phase!=="intro"&&phase!=="tintype"&&phase!=="disclaimer"&&phase!=="calibration"&&<StepBar phase={phase}/>}
 
-          {phase==="disclaimer"  &&<Disclaimer onAccept={()=>setPhase("intro")}/>}
+          {phase==="disclaimer"  &&<Disclaimer onAccept={()=>setPhase("calibration")}/>}
+
+          {phase==="calibration" &&<Calibration onConfirm={()=>setPhase("intro")} onSkip={()=>setPhase("intro")}/>}
 
           {phase==="intro"       &&<Intro
               savedData={hRes ? {freq: tFreq} : null}
