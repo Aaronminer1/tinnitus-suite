@@ -2,17 +2,21 @@ import { useState, useRef, useEffect, useCallback, Component } from "react";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 // ── Frequency presets — user selects resolution before the test starts ──────
-const FREQ_QUICK    = [500,1000,2000,4000,6000,8000,10000,12000,16000,20000];
-const FREQ_STANDARD = [250,500,1000,2000,3000,4000,6000,8000,10000,12000,14000,16000,20000];
+// Top limit is 16 kHz — 18 kHz and 20 kHz are beyond reliable consumer earbud range.
+// At 18-20 kHz the Hughson-Westlake protocol climbs to 90+ dBHL where any gain formula
+// that isn't perfectly clamped generates clipping harmonics heard as spurious low-pitch buzz.
+// Standard clinical audiometry: 250 Hz – 8 kHz. Extended high-frequency: up to 16 kHz.
+const FREQ_QUICK    = [500,1000,2000,4000,6000,8000,10000,12000,16000];
+const FREQ_STANDARD = [250,500,1000,2000,3000,4000,6000,8000,10000,12000,14000,16000];
 const FREQ_FINE     = [250,500,750,1000,1500,2000,3000,4000,5000,6000,7000,8000,
-                        10000,12000,14000,16000,18000,20000];
+                        10000,12000,14000,16000];
 const TEST_MODES = [
-  {id:"quick",    label:"QUICK",    freqs:FREQ_QUICK,    est:"~8 min",
-   desc:"10 frequencies · 500 Hz – 20 kHz · Recommended first-time screening"},
-  {id:"standard", label:"STANDARD", freqs:FREQ_STANDARD, est:"~13 min",
-   desc:"13 frequencies · 250 Hz – 20 kHz · Equivalent to a full clinical audiogram"},
-  {id:"fine",     label:"FINE",     freqs:FREQ_FINE,     est:"~20 min",
-   desc:"18 frequencies · 250 Hz – 20 kHz · Maximum resolution — every 500 Hz – 1 kHz step"},
+  {id:"quick",    label:"QUICK",    freqs:FREQ_QUICK,    est:"~7 min",
+   desc:"9 frequencies · 500 Hz – 16 kHz · Recommended first-time screening"},
+  {id:"standard", label:"STANDARD", freqs:FREQ_STANDARD, est:"~11 min",
+   desc:"12 frequencies · 250 Hz – 16 kHz · Full extended clinical audiogram"},
+  {id:"fine",     label:"FINE",     freqs:FREQ_FINE,     est:"~17 min",
+   desc:"16 frequencies · 250 Hz – 16 kHz · Maximum resolution — every 500 Hz – 1 kHz step"},
 ];
 const TEST_FREQS = FREQ_STANDARD; // consumed by legacy fallbacks only
 const EARS = ["left","right"];
@@ -682,15 +686,19 @@ function HearingTest({onComplete, onSkip}) {
     try { osc.current && osc.current.stop(); } catch(_){}
     const o = ctx.createOscillator();
     const g = ctx.createGain();
+    // dBtoG reference=80 → gain=0.9 at 80 dBHL, 0.10 at 60 dBHL (matches CAL_GAIN).
+    // Old formula (db-85)/20*0.6 clipped at ~89 dBHL — produced distortion harmonics
+    // heard as spurious low-pitch buzz during high-level threshold searches.
     g.gain.setValueAtTime(0, ctx.currentTime);
-    g.gain.linearRampToValueAtTime(Math.max(1e-5, Math.pow(10,(db-85)/20)*0.6), ctx.currentTime+0.08);
+    g.gain.linearRampToValueAtTime(dBtoG(db), ctx.currentTime + 0.08);
     o.type = "sine"; o.frequency.value = freq;
     o.connect(g);
-    if (ctx.destination.channelCount >= 2) {
-      // Per-ear routing — stereo headphones / earbuds
-      const sp = ctx.createChannelSplitter(2), mg = ctx.createChannelMerger(2);
-      g.connect(sp); sp.connect(mg, 0, ear==="left"?0:1); mg.connect(ctx.destination);
-    } else { g.connect(ctx.destination); } // mono fallback
+    if (ear !== "both" && ctx.destination.channelCount >= 2) {
+      // Route to one ear — same approach as ToneFinder (no splitter needed)
+      const mg = ctx.createChannelMerger(2);
+      g.connect(mg, 0, ear === "left" ? 0 : 1);
+      mg.connect(ctx.destination);
+    } else { g.connect(ctx.destination); }
     o.start(); osc.current = o; gn.current = g;
   };
 
