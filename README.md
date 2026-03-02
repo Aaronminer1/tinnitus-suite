@@ -1,5 +1,8 @@
 # 🔊 Tinnitus Suite
 
+> ⚠️ **EXPERIMENTAL SOFTWARE — NOT A MEDICAL DEVICE**  
+> This program has not been reviewed, tested, or approved by any medical authority, regulatory body (FDA, CE, etc.), or healthcare organization. It is provided as-is for experimental and educational purposes only. **Use entirely at your own risk.** Do not use this as a substitute for professional medical advice, diagnosis, or treatment. If you have concerns about your hearing or tinnitus, consult a qualified audiologist or physician.
+
 **A free, open-source tinnitus assessment and therapy tool.**  
 No account, no subscription, no data sent anywhere. Everything runs locally in your browser.
 
@@ -126,6 +129,14 @@ MIT — free to use, modify, and distribute.
 
 ---
 
-## Disclaimer
+## ⚠️ Disclaimer
 
-This tool is for informational and experimental purposes only. It is **not a medical device** and does not constitute medical advice. If you have concerns about your hearing or tinnitus, please consult an audiologist or ENT specialist.
+**THIS IS EXPERIMENTAL SOFTWARE. USE AT YOUR OWN RISK.**
+
+- This tool is **not a medical device**
+- It has **not been approved, certified, or reviewed** by any medical authority, government agency, or regulatory body (including but not limited to the FDA, CE, TGA, MHRA, or Health Canada)
+- It is **not intended to diagnose, treat, cure, or prevent** any disease or medical condition
+- Results from this tool **should not be used** to make medical or clinical decisions
+- The authors and contributors accept **no liability** for any harm, hearing damage, or adverse effects arising from use of this software
+- **Do not use headphone volumes that cause discomfort** — stop immediately if you experience pain or worsening symptoms
+- Always consult a **qualified audiologist or ENT specialist** for professional hearing assessment and tinnitus management
