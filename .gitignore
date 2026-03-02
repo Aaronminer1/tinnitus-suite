@@ -4,3 +4,11 @@ dist/
 *.local
 .env
 .env.*
+
+# Android build outputs
+android/app/build/
+android/build/
+android/.gradle/
+android/local.properties
+*.apk
+*.aab

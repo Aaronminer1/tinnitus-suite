@@ -7,9 +7,15 @@
     "start": "vite",
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "android:sync": "npm run build && npx cap sync android",
+    "android:build": "npm run build && npx cap sync android && cd android && JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64 ./gradlew assembleDebug",
+    "android:deploy": "npm run android:build && adb install -r android/app/build/outputs/apk/debug/app-debug.apk && adb shell am start -n com.tinnitus.suite/.MainActivity"
   },
   "dependencies": {
+    "@capacitor/android": "^8.1.0",
+    "@capacitor/cli": "^8.1.0",
+    "@capacitor/core": "^8.1.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },

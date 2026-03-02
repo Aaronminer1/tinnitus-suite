@@ -1,0 +1,9 @@
+{
+  "appId": "com.tinnitus.suite",
+  "appName": "Tinnitus Suite",
+  "webDir": "dist",
+  "android": {
+    "minSdkVersion": 26,
+    "targetSdkVersion": 29
+  }
+}
