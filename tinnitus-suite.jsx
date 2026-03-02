@@ -1778,6 +1778,39 @@ function NoiseTherapy({tinnitusFreq:initF, hearingResults, noiseTypeOnly, userId
     const src = ctx.createBufferSource(); src.buffer=buf; src.loop=true;
     const gain = ctx.createGain(); gain.gain.value = dBtoG(vl);
     const an = ctx.createAnalyser(); an.fftSize=2048; analyR.current=an;
+
+    // ── Audiogram EQ ─────────────────────────────────────────────────────────
+    // Shape the noise spectrum to compensate for the user's hearing loss at each
+    // tested frequency. This ensures the therapeutic noise is perceived as
+    // spectrally balanced rather than sounding thin at frequencies where the user
+    // has significant loss. Without this, e.g. 40 dB loss at 6 kHz means the
+    // noise at that band is nearly inaudible, reducing therapeutic efficacy.
+    //
+    // Method: peaking EQ at each audiogram frequency with gain = threshold × 0.5
+    // (50% proportional compensation, capped at +18 dB), Q = 1.8.
+    // Only applied where threshold > 10 dBHL (true loss, not measurement noise).
+    const buildAudiogramEQ = () => {
+      if (!hearingResults) return null;
+      const freqs = resFreqs(hearingResults).filter(f => f >= 250 && f <= 12000);
+      if (!freqs.length) return null;
+      const nodes = freqs.map(f => {
+        const l = hearingResults[`left_${f}`]  || 0;
+        const r = hearingResults[`right_${f}`] || 0;
+        const avg = (l + r) / 2;
+        if (avg < 10) return null; // normal hearing at this freq — no compensation needed
+        const node = ctx.createBiquadFilter();
+        node.type = "peaking";
+        node.frequency.value = f;
+        node.Q.value = 1.8;
+        node.gain.value = Math.min(18, avg * 0.5); // 50% compensation, cap at +18 dB
+        return node;
+      }).filter(Boolean);
+      if (!nodes.length) return null;
+      for (let i = 0; i < nodes.length - 1; i++) nodes[i].connect(nodes[i+1]);
+      return { first: nodes[0], last: nodes[nodes.length-1] };
+    };
+    const eq = buildAudiogramEQ();
+
     if (type === "notched") {
       // 3-stage ERB-scaled notch cascade for therapeutic TMNMT shaping:
       //   Stage 1 — deep tight notch at exact tinnitus frequency
@@ -1791,8 +1824,13 @@ function NoiseTherapy({tinnitusFreq:initF, hearingResults, noiseTypeOnly, userId
       const n1 = ctx.createBiquadFilter(); n1.type="notch"; n1.frequency.value=tf;       n1.Q.value=Q;      n1.gain.value=-nd;
       const n2 = ctx.createBiquadFilter(); n2.type="notch"; n2.frequency.value=tf;       n2.Q.value=Q*0.65; n2.gain.value=-nd*0.5;
       const n3 = ctx.createBiquadFilter(); n3.type="notch"; n3.frequency.value=tf*0.955; n3.Q.value=Q*1.4;  n3.gain.value=-nd*0.3;
-      src.connect(n1); n1.connect(n2); n2.connect(n3); n3.connect(gain);
-    } else { src.connect(gain); }
+      src.connect(n1); n1.connect(n2); n2.connect(n3);
+      if (eq) { n3.connect(eq.first); eq.last.connect(gain); }
+      else    { n3.connect(gain); }
+    } else {
+      if (eq) { src.connect(eq.first); eq.last.connect(gain); }
+      else    { src.connect(gain); }
+    }
     gain.connect(an); an.connect(ctx.destination);
     src.start(); srcR.current=src; gainR.current=gain;
   };
