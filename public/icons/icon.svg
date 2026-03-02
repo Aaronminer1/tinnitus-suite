@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- Background -->
+  <rect width="512" height="512" fill="#07090f" rx="80"/>
+  <!-- Ear outline -->
+  <path d="M256 80 C156 80 100 156 100 240 C100 310 140 360 180 380 C180 420 200 440 230 440 L260 440 C275 440 285 430 290 418 C302 418 320 400 320 380 C340 360 360 320 360 280 L360 240 C360 156 356 80 256 80Z"
+    fill="none" stroke="#00d4b4" stroke-width="20" stroke-linejoin="round"/>
+  <!-- Inner ear canal spiral -->
+  <path d="M256 160 C206 160 176 196 176 240 C176 276 198 304 230 312 C246 316 256 306 256 292 C256 278 246 268 232 268 C222 268 216 276 218 284"
+    fill="none" stroke="#00d4b4" stroke-width="14" stroke-linecap="round" opacity="0.6"/>
+  <!-- Teal glow dot at canal entrance -->
+  <circle cx="256" cy="240" r="14" fill="#00d4b4" opacity="0.9"/>
+  <!-- Sound waves left -->
+  <path d="M60 200 Q45 240 60 280" fill="none" stroke="#00d4b4" stroke-width="10" stroke-linecap="round" opacity="0.4"/>
+  <path d="M80 180 Q58 240 80 300" fill="none" stroke="#00d4b4" stroke-width="10" stroke-linecap="round" opacity="0.25"/>
+</svg>

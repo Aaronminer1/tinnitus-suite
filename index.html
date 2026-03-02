@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <!-- viewport-fit=cover fills the entire screen on notched iPhones/Android -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>Tinnitus Suite</title>
+    <meta name="description" content="Clinical pure-tone hearing assessment and personalised notched sound therapy for tinnitus. Works offline." />
+
+    <!-- ── PWA manifest ── -->
+    <link rel="manifest" href="/manifest.json" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+
+    <!-- ── Theme colour (browser chrome / task-switcher) ── -->
+    <meta name="theme-color" content="#00d4b4" />
+
+    <!-- ── iOS / iPadOS PWA meta ── -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="TinSuite" />
+    <link rel="apple-touch-icon" href="/icons/icon.svg" />
+
+    <!-- ── Android / Chrome shortcuts ── -->
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="application-name" content="TinSuite" />
+
+    <!-- ── Open Graph / sharing ── -->
+    <meta property="og:title" content="Tinnitus Suite" />
+    <meta property="og:description" content="Hearing test + notched sound therapy for tinnitus. Free, clinical-grade, works offline." />
+    <meta property="og:type" content="website" />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/main.jsx"></script>
+
+    <!-- ── Service Worker registration ── -->
+    <script>
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+          navigator.serviceWorker
+            .register('/sw.js')
+            .then(reg => console.log('[SW] registered', reg.scope))
+            .catch(err => console.warn('[SW] registration failed', err));
+        });
+      }
+    </script>
+  </body>
+</html>

@@ -1,0 +1,26 @@
+{
+  "name": "Tinnitus Suite",
+  "short_name": "TinSuite",
+  "description": "Clinical hearing assessment and personalised notched sound therapy for tinnitus",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#07090f",
+  "theme_color": "#00d4b4",
+  "categories": ["medical", "health"],
+  "icons": [
+    {
+      "src": "/icons/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "maskable any"
+    }
+  ],
+  "screenshots": [
+    {
+      "label": "Hearing test and audiogram",
+      "form_factor": "narrow"
+    }
+  ]
+}
