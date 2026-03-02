@@ -389,6 +389,73 @@ function OctaveCheck({freq, vol, earRoute, onConfirm, onOctaveUp, onOctaveDown})
 }
 
 // ─── Intro ────────────────────────────────────────────────────────────────────
+// ─── Disclaimer ──────────────────────────────────────────────────────────────
+function Disclaimer({onAccept}) {
+  const [checked, setChecked] = useState(false);
+  return (
+    <div style={{animation:"up 0.4s ease",maxWidth:640,margin:"0 auto"}}>
+      <div style={{textAlign:"center",marginBottom:28}}>
+        <div style={{fontSize:36,marginBottom:12}}>⚠️</div>
+        <Big t="EXPERIMENTAL SOFTWARE" sz={26} c={K.amber} s={{marginBottom:6}}/>
+        <Lbl t="IMPORTANT — PLEASE READ BEFORE USING" c={K.amber} s={{textAlign:"center",fontSize:14,letterSpacing:"0.16em"}}/>
+      </div>
+      <Panel hi={K.amber+"88"} s={{marginBottom:16}} ch={
+        <div style={{lineHeight:2,fontSize:14,color:K.text}}>
+          <div style={{fontWeight:700,color:K.amber,marginBottom:14,fontSize:15}}>THIS IS NOT A MEDICAL DEVICE</div>
+          <div style={{display:"grid",gap:10}}>
+            {[
+              "This software has NOT been approved, certified, or reviewed by the FDA, CE, Health Canada, TGA, MHRA, or any other regulatory body",
+              "It is NOT intended to diagnose, treat, cure, or prevent any disease or medical condition",
+              "Results must NOT be used to make any medical or clinical decisions",
+              "The authors accept NO liability for any harm, hearing damage, or adverse effects from use of this software",
+              "Stop immediately if you experience pain, discomfort, or worsening symptoms",
+              "Always consult a qualified audiologist or ENT specialist for professional hearing care",
+            ].map((t,i) => (
+              <div key={i} style={{display:"flex",gap:10,alignItems:"flex-start"}}>
+                <span style={{color:K.amber,flexShrink:0,marginTop:2}}>▸</span>
+                <span>{t}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      }/>
+      <Panel hi={K.border} s={{marginBottom:24}} ch={
+        <label style={{display:"flex",alignItems:"flex-start",gap:14,cursor:"pointer"}}>
+          <input
+            type="checkbox"
+            checked={checked}
+            onChange={e=>setChecked(e.target.checked)}
+            style={{width:22,height:22,flexShrink:0,marginTop:2,accentColor:K.teal,cursor:"pointer"}}
+          />
+          <span style={{fontSize:14,lineHeight:1.9,color:K.text}}>
+            I understand this is experimental software, <strong>not a medical device</strong>, and has not been approved by any regulatory or medical authority. I accept full responsibility for my use of this tool and will consult a medical professional for any health concerns.
+          </span>
+        </label>
+      }/>
+      <div style={{textAlign:"center"}}>
+        <button
+          disabled={!checked}
+          onClick={()=>{
+            try { sessionStorage.setItem("tinnitus_disclaimer_accepted","1"); } catch(_){}
+            onAccept();
+          }}
+          style={{
+            fontFamily:"system-ui",fontWeight:700,fontSize:15,letterSpacing:"0.12em",
+            padding:"16px 52px",borderRadius:8,border:`1px solid ${checked?K.teal:K.border}`,
+            background:checked?"rgba(0,212,180,0.10)":"transparent",
+            color:checked?K.teal:K.muted,
+            transition:"all 0.2s",
+            cursor:checked?"pointer":"not-allowed",
+            animation:checked?"glow 2.5s ease-in-out infinite":"none",
+          }}
+        >
+          {checked ? "I UNDERSTAND — CONTINUE →" : "TICK THE BOX ABOVE TO CONTINUE"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function Intro({onStart, onSkip, savedData, onResume}) {
   return (
     <div style={{animation:"up 0.4s ease"}}>
@@ -1889,7 +1956,7 @@ class ErrorBoundary extends Component {
 
 // ─── Nav Bar ─────────────────────────────────────────────────────────────────
 function NavBar({phase, onBack, onRestart}) {
-  const canBack = phase !== "intro" && phase !== "tintype";
+  const canBack = phase !== "intro" && phase !== "tintype" && phase !== "disclaimer";
   return (
     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18}}>
       <button onClick={onBack} style={{
@@ -1906,7 +1973,7 @@ function NavBar({phase, onBack, onRestart}) {
       >
         ← BACK
       </button>
-      {phase!=="intro" && (
+      {phase!=="intro" && phase!=="disclaimer" && (
         <button onClick={onRestart} style={{
           padding:"7px 14px",background:"transparent",
           border:`1px solid ${K.border}`,borderRadius:6,
@@ -1925,7 +1992,11 @@ function NavBar({phase, onBack, onRestart}) {
 
 // ─── Root ─────────────────────────────────────────────────────────────────────
 export default function App() {
-  const [phase,       setPhase]     = useState("intro");
+  const [phase, setPhase] = useState(() => {
+    // Show disclaimer every session (sessionStorage clears when app is closed)
+    try { return sessionStorage.getItem("tinnitus_disclaimer_accepted") ? "intro" : "disclaimer"; }
+    catch(_) { return "disclaimer"; }
+  });
   // Audiogram + tinnitus frequency persist across browser/PWA sessions via localStorage
   const [hRes, setHRes] = useState(() => {
     try { const s = localStorage.getItem("tinnitus_audiogram"); return s ? JSON.parse(s) : null; } catch(_) { return null; }
@@ -1964,7 +2035,9 @@ export default function App() {
       <div style={{maxWidth:700,margin:"0 auto"}}>
         <NavBar phase={phase} onBack={back} onRestart={restart}/>
         <ErrorBoundary>
-          {phase!=="intro"&&phase!=="tintype"&&<StepBar phase={phase}/>}
+          {phase!=="intro"&&phase!=="tintype"&&phase!=="disclaimer"&&<StepBar phase={phase}/>}
+
+          {phase==="disclaimer"  &&<Disclaimer onAccept={()=>setPhase("intro")}/>}
 
           {phase==="intro"       &&<Intro
               savedData={hRes ? {freq: tFreq} : null}
