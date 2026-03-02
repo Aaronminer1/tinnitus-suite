@@ -35,9 +35,9 @@ const NOISE_TYPES = [
 ];
 
 const K = {
-  bg:"#07090f", card:"#0c0f1c", border:"#172038",
+  bg:"#07090f", card:"#0c0f1c", border:"#1e2e4a",
   teal:"#00d4b4", red:"#ff4757", amber:"#ffa502",
-  muted:"#364d66", dim:"#1c2a3e", text:"#c0cfe0", sub:"#445c78",
+  muted:"#7a9bbf", dim:"#1c2a3e", text:"#e8f0fa", sub:"#9db8d4",
 };
 
 // ─── Utilities ────────────────────────────────────────────────────────────────
@@ -156,7 +156,7 @@ const CSS = `
   }
   /* ── Narrow screens: loosen grid cols, larger tap zones ───────────── */
   @media(max-width:480px){
-    body{font-size:13px;}
+    body{font-size:16px;}
   }
   /* ── iPhone/Android notch: honour safe area insets ─────────────── */
   #root{padding-bottom:env(safe-area-inset-bottom,0px);}
@@ -169,11 +169,11 @@ const Panel = ({ch, s, hi}) => (
   </div>
 );
 
-const Lbl = ({t, c, sz=10, s}) => (
+const Lbl = ({t, c, sz=13, s}) => (
   <div style={{fontFamily:"'Courier New',monospace",fontSize:sz,letterSpacing:"0.14em",color:c||K.sub,...s}}>{t}</div>
 );
 
-const Big = ({t, sz=22, c, s}) => (
+const Big = ({t, sz=24, c, s}) => (
   <div style={{fontFamily:"system-ui",fontWeight:700,fontSize:sz,color:c||K.text,letterSpacing:"0.04em",...s}}>{t}</div>
 );
 
@@ -258,11 +258,11 @@ function TinnitusTypeScreen({onTonal, onNoise, onUnsure}) {
     <div style={{animation:"up 0.3s ease"}}>
       <div style={{textAlign:"center",marginBottom:24}}>
         <Big t="WHAT DOES YOUR TINNITUS SOUND LIKE?" sz={22}/>
-        <Lbl t="THIS DETERMINES WHICH THERAPY APPROACH WILL WORK FOR YOU" s={{textAlign:"center",marginTop:6,fontSize:10,letterSpacing:"0.16em"}}/>
+        <Lbl t="THIS DETERMINES WHICH THERAPY APPROACH WILL WORK FOR YOU" s={{textAlign:"center",marginTop:6,fontSize:13,letterSpacing:"0.16em"}}/>
       </div>
       <Panel s={{marginBottom:14,borderColor:"#1e2a3e"}} ch={<>
         <Lbl t="WHY THIS MATTERS" c={K.amber} s={{marginBottom:8}}/>
-        <Lbl t="Notched sound therapy only works for tonal tinnitus — it requires a precise frequency target to create the notch around. For noise-type tinnitus, broadband masking (plain white/pink noise) is the appropriate approach and can still significantly reduce distress." s={{lineHeight:1.9,fontSize:11}}/>
+        <Lbl t="Notched sound therapy only works for tonal tinnitus — it requires a precise frequency target to create the notch around. For noise-type tinnitus, broadband masking (plain white/pink noise) is the appropriate approach and can still significantly reduce distress." s={{lineHeight:1.9,fontSize:14}}/>
       </>}/>
       <div style={{display:"flex",flexDirection:"column",gap:10,marginBottom:16}}>
         {types.map(t=>(
@@ -271,8 +271,8 @@ function TinnitusTypeScreen({onTonal, onNoise, onUnsure}) {
               <div style={{fontSize:32,flexShrink:0,marginTop:2}}>{t.icon}</div>
               <div style={{flex:1}}>
                 <div style={{fontFamily:"system-ui",fontWeight:700,fontSize:15,color:t.color,marginBottom:5}}>{t.title}</div>
-                <Lbl t={t.desc} s={{lineHeight:1.8,fontSize:11,marginBottom:12}}/>
-                <button onClick={t.action} style={{fontFamily:"system-ui",fontWeight:600,fontSize:11,letterSpacing:"0.1em",padding:"10px 20px",background:`rgba(${t.id==="tonal"?"0,212,180":t.id==="noise"?"162,155,254":"255,165,2"},0.1)`,border:`1px solid ${t.color}`,borderRadius:6,color:t.color,transition:"all 0.15s"}}>
+                <Lbl t={t.desc} s={{lineHeight:1.8,fontSize:14,marginBottom:12}}/>
+                <button onClick={t.action} style={{fontFamily:"system-ui",fontWeight:600,fontSize:14,letterSpacing:"0.1em",padding:"10px 20px",background:`rgba(${t.id==="tonal"?"0,212,180":t.id==="noise"?"162,155,254":"255,165,2"},0.1)`,border:`1px solid ${t.color}`,borderRadius:6,color:t.color,transition:"all 0.15s"}}>
                   {t.btnLabel}
                 </button>
               </div>
@@ -345,17 +345,17 @@ function OctaveCheck({freq, vol, earRoute, onConfirm, onOctaveUp, onOctaveDown})
     <div style={{animation:"up 0.3s ease"}}>
       <div style={{textAlign:"center",marginBottom:22}}>
         <Big t="OCTAVE CONFUSION CHECK"/>
-        <Lbl t="A COMMON MATCHING ERROR — LET'S VERIFY YOUR FREQUENCY" s={{textAlign:"center",marginTop:5,fontSize:11}}/>
+        <Lbl t="A COMMON MATCHING ERROR — LET'S VERIFY YOUR FREQUENCY" s={{textAlign:"center",marginTop:5,fontSize:14}}/>
       </div>
 
       <Panel s={{marginBottom:14,borderColor:K.amber+"44"}} ch={<>
         <Lbl t="⚠ WHAT IS OCTAVE CONFUSION?" c={K.amber} s={{marginBottom:8}}/>
-        <Lbl t="It's common to accidentally match your tinnitus to a frequency that's exactly double or half the true value — they can sound deceptively similar. Studies show roughly 1 in 15 people make this error in self-directed matching. Getting this wrong means the notch will be placed at the wrong frequency and therapy won't work." s={{lineHeight:1.9,fontSize:11}}/>
+        <Lbl t="It's common to accidentally match your tinnitus to a frequency that's exactly double or half the true value — they can sound deceptively similar. Studies show roughly 1 in 15 people make this error in self-directed matching. Getting this wrong means the notch will be placed at the wrong frequency and therapy won't work." s={{lineHeight:1.9,fontSize:14}}/>
       </>}/>
 
       <Panel s={{marginBottom:14}} ch={<>
         <Lbl t={`YOU MATCHED: ${hzFmt(freq)}`} c={K.teal} s={{marginBottom:14,fontSize:12}}/>
-        <Lbl t="Listen to each tone below and pick the one that sounds most like your tinnitus:" s={{marginBottom:16,lineHeight:1.8,fontSize:11}}/>
+        <Lbl t="Listen to each tone below and pick the one that sounds most like your tinnitus:" s={{marginBottom:16,lineHeight:1.8,fontSize:14}}/>
         <div style={{display:"flex",flexDirection:"column",gap:8}}>
           {candidates.map((c,i)=>{
             const isPlaying = playingHz===c.hz;
@@ -366,9 +366,9 @@ function OctaveCheck({freq, vol, earRoute, onConfirm, onOctaveUp, onOctaveDown})
                 </button>
                 <div style={{flex:1}}>
                   <div style={{fontFamily:"'Courier New',monospace",fontSize:15,fontWeight:700,color:isPlaying?K.teal:K.text}}>{hzFmt(c.hz)}</div>
-                  <Lbl t={c.label} s={{fontSize:10}}/>
+                  <Lbl t={c.label} s={{fontSize:13}}/>
                 </div>
-                <button onClick={()=>{stop();c.action(c.hz);}} style={{padding:"8px 16px",background:"rgba(0,212,180,0.06)",border:`1px solid ${K.teal}`,borderRadius:6,color:K.teal,fontFamily:"system-ui",fontWeight:600,fontSize:11,transition:"all 0.15s"}}>
+                <button onClick={()=>{stop();c.action(c.hz);}} style={{padding:"8px 16px",background:"rgba(0,212,180,0.06)",border:`1px solid ${K.teal}`,borderRadius:6,color:K.teal,fontFamily:"system-ui",fontWeight:600,fontSize:14,transition:"all 0.15s"}}>
                   THIS ONE ✓
                 </button>
               </div>
@@ -379,7 +379,7 @@ function OctaveCheck({freq, vol, earRoute, onConfirm, onOctaveUp, onOctaveDown})
 
       <Panel s={{borderColor:K.dim}} ch={<>
         <Lbl t="💡 TIP" s={{marginBottom:6}}/>
-        <Lbl t="Play each tone in sequence. Try to match not just the pitch but the quality. If two sound equally similar, choose the lower one — high-frequency tinnitus is sometimes perceived an octave lower than it actually is." s={{lineHeight:1.9,fontSize:10}}/>
+        <Lbl t="Play each tone in sequence. Try to match not just the pitch but the quality. If two sound equally similar, choose the lower one — high-frequency tinnitus is sometimes perceived an octave lower than it actually is." s={{lineHeight:1.9,fontSize:13}}/>
       </>}/>
     </div>
   );
@@ -391,7 +391,7 @@ function Intro({onStart, onSkip, savedData, onResume}) {
     <div style={{animation:"up 0.4s ease"}}>
       <div style={{textAlign:"center",marginBottom:36}}>
         <Big t={<>TINNITUS <span style={{color:K.text}}>SUITE</span></>} sz={38} c={K.teal} s={{marginBottom:6}}/>
-        <Lbl t="CLINICAL HEARING ASSESSMENT & PERSONALISED SOUND THERAPY" s={{textAlign:"center",fontSize:11,letterSpacing:"0.18em"}}/>
+        <Lbl t="CLINICAL HEARING ASSESSMENT & PERSONALISED SOUND THERAPY" s={{textAlign:"center",fontSize:14,letterSpacing:"0.18em"}}/>
       </div>
       <Panel s={{marginBottom:14}} ch={
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:20}}>
@@ -403,7 +403,7 @@ function Intro({onStart, onSkip, savedData, onResume}) {
             <div key={s.n} style={{borderLeft:`2px solid ${K.teal}`,paddingLeft:12}}>
               <Lbl t={s.n} c={K.teal} sz={18} s={{opacity:0.25,marginBottom:8}}/>
               <div style={{fontFamily:"system-ui",fontWeight:600,fontSize:12,color:K.text,marginBottom:6}}>{s.t}</div>
-              <Lbl t={s.d} s={{lineHeight:1.9,fontSize:10}}/>
+              <Lbl t={s.d} s={{lineHeight:1.9,fontSize:13}}/>
             </div>
           ))}
         </div>
@@ -412,14 +412,14 @@ function Intro({onStart, onSkip, savedData, onResume}) {
         <Lbl t="⚠ BEFORE YOU BEGIN" c={K.amber} s={{marginBottom:10}}/>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
           {["Wear headphones or earbuds — needed for per-ear testing","Find a quiet room free of background noise","Volume calibration is guided — don't pre-set it","This is a screening tool, not a medical diagnosis"].map(t=>(
-            <Lbl key={t} t={`▸ ${t}`} s={{lineHeight:1.8,fontSize:11}}/>
+            <Lbl key={t} t={`▸ ${t}`} s={{lineHeight:1.8,fontSize:14}}/>
           ))}
         </div>
       </>}/>
       {savedData && (
         <Panel s={{marginBottom:14,borderColor:K.teal+"55"}} ch={<>
           <Lbl t="↩ PREVIOUS SESSION DATA FOUND" c={K.teal} s={{marginBottom:8}}/>
-          <Lbl t={`Hearing test complete · Last tinnitus match: ${hzFmt(savedData.freq)}`} s={{fontSize:11,lineHeight:1.8,marginBottom:12}}/>
+          <Lbl t={`Hearing test complete · Last tinnitus match: ${hzFmt(savedData.freq)}`} s={{fontSize:14,lineHeight:1.8,marginBottom:12}}/>
           <button onClick={onResume} style={{width:"100%",padding:"13px",background:"rgba(0,212,180,0.1)",border:`1px solid ${K.teal}`,borderRadius:7,color:K.teal,fontFamily:"system-ui",fontWeight:600,fontSize:13,letterSpacing:"0.1em"}}>
             RESUME → TONE FINDER & THERAPY ↗
           </button>
@@ -618,9 +618,9 @@ function HearingTest({onComplete, onSkip}) {
       <div style={{animation:"up 0.3s ease"}}>
         <div style={{textAlign:"center",marginBottom:28}}>
           <Big t="AUDIO SETUP"/>
-          <Lbl t="WHAT ARE YOU LISTENING WITH?" s={{textAlign:"center",marginTop:5,fontSize:11}}/>
+          <Lbl t="WHAT ARE YOU LISTENING WITH?" s={{textAlign:"center",marginTop:5,fontSize:14}}/>
         </div>
-        <Lbl t="Your answer determines how the test runs and which ear-routing is used." s={{textAlign:"center",marginBottom:16,fontSize:10}}/>
+        <Lbl t="Your answer determines how the test runs and which ear-routing is used." s={{textAlign:"center",marginBottom:16,fontSize:13}}/>
         {[
           {id:"headphones", icon:"🎧", title:"Headphones or Earbuds", color:K.teal,
            desc:"Over-ear, in-ear, or AirPods plugged into or connected to your device. Enables per-ear testing — most accurate results."},
@@ -632,9 +632,9 @@ function HearingTest({onComplete, onSkip}) {
               <div style={{fontSize:36,flexShrink:0,marginTop:2}}>{opt.icon}</div>
               <div style={{flex:1}}>
                 <div style={{fontFamily:"system-ui",fontWeight:700,fontSize:15,color:opt.color,marginBottom:5}}>{opt.title}</div>
-                <Lbl t={opt.desc} s={{lineHeight:1.8,fontSize:11}}/>
+                <Lbl t={opt.desc} s={{lineHeight:1.8,fontSize:14}}/>
               </div>
-              <div style={{padding:"8px 14px",border:`1px solid ${opt.color}`,borderRadius:6,color:opt.color,fontFamily:"'Courier New',monospace",fontSize:11,flexShrink:0,alignSelf:"center"}}>SELECT →</div>
+              <div style={{padding:"8px 14px",border:`1px solid ${opt.color}`,borderRadius:6,color:opt.color,fontFamily:"'Courier New',monospace",fontSize:14,flexShrink:0,alignSelf:"center"}}>SELECT →</div>
             </div>
           }/>
         ))}
@@ -656,16 +656,16 @@ function HearingTest({onComplete, onSkip}) {
       <div style={{animation:"up 0.3s ease"}}>
         <div style={{textAlign:"center",marginBottom:24}}>
           <Big t="VOLUME CALIBRATION"/>
-          <Lbl t="SET SYSTEM VOLUME BEFORE TESTING" s={{textAlign:"center",marginTop:5,fontSize:11}}/>
+          <Lbl t="SET SYSTEM VOLUME BEFORE TESTING" s={{textAlign:"center",marginTop:5,fontSize:14}}/>
         </div>
 
         <Panel s={{marginBottom:14,borderColor:K.amber+"55"}} ch={<>
           <Lbl t="⚠ WHY THIS MATTERS" c={K.amber} s={{marginBottom:8}}/>
-          <Lbl t="Hearing thresholds (dBHL) are only meaningful relative to a fixed output level. Without this step, the same score could appear at wildly different system volumes — making the audiogram unreliable for calibrating your therapy volume." s={{lineHeight:1.9,fontSize:11}}/>
+          <Lbl t="Hearing thresholds (dBHL) are only meaningful relative to a fixed output level. Without this step, the same score could appear at wildly different system volumes — making the audiogram unreliable for calibrating your therapy volume." s={{lineHeight:1.9,fontSize:14}}/>
         </>}/>
 
         <Panel s={{marginBottom:14}} ch={<>
-          <Lbl t="HOW TO CALIBRATE" c={K.teal} s={{marginBottom:14,fontSize:11}}/>
+          <Lbl t="HOW TO CALIBRATE" c={K.teal} s={{marginBottom:14,fontSize:14}}/>
           <div style={{display:"flex",flexDirection:"column",gap:10}}>
             {[
               {n:"1", t: isHP ? "Put on your headphones / earbuds" : "Place your device flat on a surface, speaker facing up"},
@@ -676,15 +676,15 @@ function HearingTest({onComplete, onSkip}) {
               {n:"6", t: "Press CONFIRM — do not change system volume for the rest of the test"},
             ].map(({n,t})=>(
               <div key={n} style={{display:"flex",gap:12,alignItems:"flex-start"}}>
-                <div style={{width:24,height:24,borderRadius:"50%",border:`1px solid ${K.teal}`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,fontFamily:"'Courier New',monospace",fontSize:11,color:K.teal}}>{n}</div>
-                <Lbl t={t} s={{lineHeight:1.8,fontSize:11,paddingTop:3}}/>
+                <div style={{width:24,height:24,borderRadius:"50%",border:`1px solid ${K.teal}`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,fontFamily:"'Courier New',monospace",fontSize:14,color:K.teal}}>{n}</div>
+                <Lbl t={t} s={{lineHeight:1.8,fontSize:14,paddingTop:3}}/>
               </div>
             ))}
           </div>
 
           {/* Reference tone player */}
           <div style={{marginTop:22,padding:"20px",background:K.dim,borderRadius:10,textAlign:"center"}}>
-            <Lbl t="1 kHz REFERENCE TONE" c={K.teal} s={{marginBottom:12,fontSize:11}}/>
+            <Lbl t="1 kHz REFERENCE TONE" c={K.teal} s={{marginBottom:12,fontSize:14}}/>
             <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:16,marginBottom:12}}>
               <button
                 onClick={calPlaying ? stopCalTone : startCalTone}
@@ -696,7 +696,7 @@ function HearingTest({onComplete, onSkip}) {
                 {calPlaying ? "⏹" : "▶"}
               </button>
               <div style={{textAlign:"left"}}>
-                <Lbl t={calPlaying ? "PLAYING — raise system volume now" : "Tap to play reference tone"} c={calPlaying?K.teal:K.muted} s={{fontSize:11,marginBottom:4}}/>
+                <Lbl t={calPlaying ? "PLAYING — raise system volume now" : "Tap to play reference tone"} c={calPlaying?K.teal:K.muted} s={{fontSize:14,marginBottom:4}}/>
                 {calPlaying && (
                   <div style={{display:"flex",gap:4,alignItems:"flex-end",height:20}}>
                     {[0,1,2,3,4].map(i=>(
@@ -708,13 +708,13 @@ function HearingTest({onComplete, onSkip}) {
                 )}
               </div>
             </div>
-            <Lbl t="Fixed reference: 1 kHz · gain = –20 dBFS · plays continuously until you stop it" s={{fontSize:9,color:K.sub}}/>
+            <Lbl t="Fixed reference: 1 kHz · gain = –20 dBFS · plays continuously until you stop it" s={{fontSize:12,color:K.sub}}/>
           </div>
         </>}/>
 
         <Panel s={{marginBottom:14,borderColor:"#1e2a3e"}} ch={<>
           <Lbl t="⚠ IMPORTANT" c={K.amber} s={{marginBottom:6}}/>
-          <Lbl t={`After confirming, ${isHP?"keep the headphones on and":"keep the device in place —"} do not touch your system volume controls until the hearing test is finished. Changing volume mid-test corrupts your thresholds.`} s={{lineHeight:1.9,fontSize:11}}/>
+          <Lbl t={`After confirming, ${isHP?"keep the headphones on and":"keep the device in place —"} do not touch your system volume controls until the hearing test is finished. Changing volume mid-test corrupts your thresholds.`} s={{lineHeight:1.9,fontSize:14}}/>
         </>}/>
 
         <button
@@ -724,7 +724,7 @@ function HearingTest({onComplete, onSkip}) {
         </button>
 
         <div style={{textAlign:"center"}}>
-          <button onClick={()=>setAudioDevice(null)} style={{fontFamily:"system-ui",fontSize:11,padding:"8px 20px",background:"transparent",border:`1px solid ${K.muted}`,borderRadius:7,color:K.muted,transition:"all 0.2s"}}
+          <button onClick={()=>setAudioDevice(null)} style={{fontFamily:"system-ui",fontSize:14,padding:"8px 20px",background:"transparent",border:`1px solid ${K.muted}`,borderRadius:7,color:K.muted,transition:"all 0.2s"}}
             onMouseEnter={e=>{e.currentTarget.style.borderColor=K.teal;e.currentTarget.style.color=K.teal;}}
             onMouseLeave={e=>{e.currentTarget.style.borderColor=K.muted;e.currentTarget.style.color=K.muted;}}>
             ← BACK TO DEVICE SELECTION
@@ -740,9 +740,9 @@ function HearingTest({onComplete, onSkip}) {
       <div style={{animation:"up 0.3s ease"}}>
         <div style={{textAlign:"center",marginBottom:28}}>
           <Big t="PURE TONE AUDIOMETRY"/>
-          <Lbl t="CHOOSE TEST RESOLUTION" s={{textAlign:"center",marginTop:5,fontSize:11}}/>
+          <Lbl t="CHOOSE TEST RESOLUTION" s={{textAlign:"center",marginTop:5,fontSize:14}}/>
         </div>
-        <Lbl t="Use headphones or earbuds in a quiet room. Each mode tests both ears." s={{textAlign:"center",marginBottom:16,fontSize:10}}/>
+        <Lbl t="Use headphones or earbuds in a quiet room. Each mode tests both ears." s={{textAlign:"center",marginBottom:16,fontSize:13}}/>
         {TEST_MODES.map(m=>(
           <div key={m.id} onClick={()=>setTestMode(m.id)}
             style={{background:K.card,border:`1px solid ${K.border}`,borderRadius:14,padding:20,marginBottom:10,cursor:"pointer",transition:"all 0.15s"}}
@@ -786,8 +786,8 @@ function HearingTest({onComplete, onSkip}) {
     <div style={{animation:"up 0.3s ease"}}>
       <div style={{textAlign:"center",marginBottom:20}}>
         <Big t="PURE TONE AUDIOMETRY"/>
-        <Lbl t={audioDevice==="speaker" ? `◄► COMBINED · ${fLabel(freqs[freqIdx])}Hz · ${dB} dBHL` : `${EARS[earIdx]==="left"?"◄ LEFT EAR":"RIGHT EAR ►"} · ${fLabel(freqs[freqIdx])}Hz · ${dB} dBHL`} s={{textAlign:"center",marginTop:5,fontSize:11}}/>
-        {audioDevice==="speaker" && <Lbl t="⚠ Both ears combined — headphones give independent per-ear results" c={K.amber} s={{textAlign:"center",fontSize:9,marginTop:3}}/>}
+        <Lbl t={audioDevice==="speaker" ? `◄► COMBINED · ${fLabel(freqs[freqIdx])}Hz · ${dB} dBHL` : `${EARS[earIdx]==="left"?"◄ LEFT EAR":"RIGHT EAR ►"} · ${fLabel(freqs[freqIdx])}Hz · ${dB} dBHL`} s={{textAlign:"center",marginTop:5,fontSize:14}}/>
+        {audioDevice==="speaker" && <Lbl t="⚠ Both ears combined — headphones give independent per-ear results" c={K.amber} s={{textAlign:"center",fontSize:12,marginTop:3}}/>}
       </div>
 
       <Panel s={{marginBottom:14}} ch={<>
@@ -801,7 +801,7 @@ function HearingTest({onComplete, onSkip}) {
         <div style={{display:"flex",gap:12}}>
           {EARS.map((ear,ei) => (
             <div key={ear} style={{flex:1}}>
-              <Lbl t={ear==="left"?"◄ LEFT":"RIGHT ►"} s={{marginBottom:6,fontSize:9}}/>
+              <Lbl t={ear==="left"?"◄ LEFT":"RIGHT ►"} s={{marginBottom:6,fontSize:12}}/>
               <div style={{display:"flex",gap:2}}>
                 {freqs.map((f,fi) => {
                   const isDone = results[`${ear}_${f}`] !== undefined;
@@ -834,7 +834,7 @@ function HearingTest({onComplete, onSkip}) {
           <div style={{fontSize:44,marginBottom:16}}>🎧</div>
           <Lbl t="READY TO TEST" c={K.text} sz={12} s={{marginBottom:6}}/>
           <Lbl t={`${EARS[earIdx]==="left"?"◄ Left":"Right ►"} ear · ${hzFmt(freqs[freqIdx])} · ${dB} dBHL`} s={{marginBottom:lastAns===false?12:28,lineHeight:1.7}}/>
-          {lastAns===false&&<Lbl t={`Not heard — volume increased to ${dB} dBHL`} c={K.amber} s={{marginBottom:20,fontSize:11}}/>}
+          {lastAns===false&&<Lbl t={`Not heard — volume increased to ${dB} dBHL`} c={K.amber} s={{marginBottom:20,fontSize:14}}/>}
           <button onClick={runTrial} style={{fontFamily:"system-ui",fontWeight:600,fontSize:13,letterSpacing:"0.12em",padding:"13px 36px",background:"rgba(0,212,180,0.1)",border:`1px solid ${K.teal}`,borderRadius:8,color:K.teal}}>▶ PLAY TONE</button>
         </>}
 
@@ -873,11 +873,11 @@ function HearingTest({onComplete, onSkip}) {
           <div style={{flex:1}}>
             <Lbl t="CURRENT LEVEL" s={{marginBottom:6}}/>
             <Big t={<>{dB}<span style={{fontSize:13}}> dBHL</span></>} sz={30} c={K.teal}/>
-            <Lbl t={catFor(dB).label+" zone"} c={catFor(dB).color} s={{marginTop:4,fontSize:10}}/>
+            <Lbl t={catFor(dB).label+" zone"} c={catFor(dB).color} s={{marginTop:4,fontSize:13}}/>
           </div>
           <div style={{flex:2,borderLeft:`1px solid ${K.dim}`,paddingLeft:20}}>
             <Lbl t="HOW IT WORKS" s={{marginBottom:8}}/>
-            <Lbl t="Starting at 60 dBHL and descending 10 dB each time you hear it. When you first miss, it rises in 5 dB steps — that converging level is your threshold. This Hughson-Westlake method matches clinical ISO 8253-1 audiometry. Headphone mode tests each ear independently; speaker mode runs one combined pass." s={{lineHeight:1.9,fontSize:10}}/>
+            <Lbl t="Starting at 60 dBHL and descending 10 dB each time you hear it. When you first miss, it rises in 5 dB steps — that converging level is your threshold. This Hughson-Westlake method matches clinical ISO 8253-1 audiometry. Headphone mode tests each ear independently; speaker mode runs one combined pass." s={{lineHeight:1.9,fontSize:13}}/>
           </div>
         </div>
       }/>
@@ -908,7 +908,7 @@ function TestResults({results, onContinue}) {
     <div style={{animation:"up 0.3s ease"}}>
       <div style={{textAlign:"center",marginBottom:22}}>
         <Big t="AUDIOGRAM RESULTS"/>
-        <Lbl t={`HEARING THRESHOLDS · BOTH EARS · ${rf.length} FREQUENCIES`} s={{textAlign:"center",marginTop:5,fontSize:11}}/>
+        <Lbl t={`HEARING THRESHOLDS · BOTH EARS · ${rf.length} FREQUENCIES`} s={{textAlign:"center",marginTop:5,fontSize:14}}/>
       </div>
 
       <Panel s={{marginBottom:14}} ch={<>
@@ -972,7 +972,7 @@ function TestResults({results, onContinue}) {
             const lbl = f>=1000?`${(f/1000).toFixed(f%1000===0?0:1)}k`:`${f}`;
             return (
               <div key={f} style={{background:K.dim,borderRadius:8,padding:"10px 4px",textAlign:"center",border:`1px solid ${ct.color}33`}}>
-                <Lbl t={`${lbl}Hz`} s={{fontSize:9,marginBottom:4}}/>
+                <Lbl t={`${lbl}Hz`} s={{fontSize:12,marginBottom:4}}/>
                 <div style={{fontFamily:"system-ui",fontSize:14,fontWeight:700,color:ct.color,marginBottom:2}}>{Math.round((l+r)/2)}</div>
                 <Lbl t={`L:${l} R:${r}`} s={{fontSize:8}}/>
               </div>
@@ -983,7 +983,7 @@ function TestResults({results, onContinue}) {
 
       <Panel s={{marginBottom:20,borderColor:K.amber+"44"}} ch={<>
         <Lbl t="⚠ NOTABLE FINDING" c={K.amber} s={{marginBottom:8}}/>
-        <Lbl t={<>Your highest threshold was at <span style={{color:K.text}}>{hzFmt(worstF)}</span> ({Math.round(worstV)} dBHL average). High-frequency loss frequently co-occurs with tinnitus. The tone finder will start here.</>} s={{lineHeight:1.9,fontSize:11}}/>
+        <Lbl t={<>Your highest threshold was at <span style={{color:K.text}}>{hzFmt(worstF)}</span> ({Math.round(worstV)} dBHL average). High-frequency loss frequently co-occurs with tinnitus. The tone finder will start here.</>} s={{lineHeight:1.9,fontSize:14}}/>
       </>}/>
 
       <div style={{textAlign:"center"}}>
@@ -1211,13 +1211,13 @@ function ToneFinder({hearingResults, onComplete}) {
     <div style={{animation:"up 0.3s ease"}}>
       <div style={{textAlign:"center",marginBottom:22}}>
         <Big t="TINNITUS TONE FINDER"/>
-        <Lbl t="MATCH THIS TONE TO YOUR TINNITUS RINGING" s={{textAlign:"center",marginTop:5,fontSize:11}}/>
+        <Lbl t="MATCH THIS TONE TO YOUR TINNITUS RINGING" s={{textAlign:"center",marginTop:5,fontSize:14}}/>
       </div>
 
       <Panel s={{textAlign:"center",marginBottom:14,position:"relative",overflow:"hidden"}} ch={<>
         <div style={{position:"absolute",inset:0,background:playing?"radial-gradient(ellipse at 50% 0%,rgba(0,212,180,0.05),transparent 60%)":"none",pointerEvents:"none",transition:"all 0.5s"}}/>
         <Big t={hzFmt(dispHz)} sz={56} c={playing?K.teal:K.muted} s={{marginBottom:4,textShadow:playing?"0 0 40px rgba(0,212,180,0.4)":"none",transition:"all 0.3s"}}/>
-        <Lbl t={`${Math.round(dispHz)} Hz`} s={{textAlign:"center",marginBottom:24,fontSize:11}}/>
+        <Lbl t={`${Math.round(dispHz)} Hz`} s={{textAlign:"center",marginBottom:24,fontSize:14}}/>
 
         <div style={{display:"flex",justifyContent:"center",marginBottom:24}}>
           <button onClick={()=>playing?stopTone():startTone()} style={{
@@ -1276,7 +1276,7 @@ function ToneFinder({hearingResults, onComplete}) {
         <div style={{display:"flex",justifyContent:"center",gap:8,marginBottom:12}}>
           {[{id:"left",label:"◄ LEFT"},{id:"both",label:"◄► BOTH"},{id:"right",label:"RIGHT ►"}].map(({id,label})=>(
             <button key={id} onClick={()=>setEarRoute(id)}
-              style={{padding:"7px 14px",background:earRoute===id?"rgba(0,212,180,0.12)":"transparent",border:`1px solid ${earRoute===id?K.teal:K.border}`,borderRadius:6,color:earRoute===id?K.teal:K.muted,fontSize:10,fontFamily:"'Courier New',monospace",transition:"all 0.15s"}}>
+              style={{padding:"7px 14px",background:earRoute===id?"rgba(0,212,180,0.12)":"transparent",border:`1px solid ${earRoute===id?K.teal:K.border}`,borderRadius:6,color:earRoute===id?K.teal:K.muted,fontSize:13,fontFamily:"'Courier New',monospace",transition:"all 0.15s"}}>
               {label}
             </button>
           ))}
@@ -1285,7 +1285,7 @@ function ToneFinder({hearingResults, onComplete}) {
         <div style={{display:"grid",gridTemplateColumns:"repeat(6,1fr)",gap:5,marginBottom:5}}>
           {[{l:"−oct",c:-1200},{l:"−semi",c:-100},{l:"−10¢",c:-10},{l:"+10¢",c:10},{l:"+semi",c:100},{l:"+oct",c:1200}].map(({l,c})=>(
             <button key={l} onClick={()=>applyFcents(c)}
-              style={{padding:"9px 2px",background:"transparent",border:`1px solid ${K.border}`,borderRadius:6,color:K.muted,fontSize:10,fontFamily:"'Courier New',monospace",transition:"all 0.15s"}}
+              style={{padding:"9px 2px",background:"transparent",border:`1px solid ${K.border}`,borderRadius:6,color:K.muted,fontSize:13,fontFamily:"'Courier New',monospace",transition:"all 0.15s"}}
               onMouseEnter={e=>{e.currentTarget.style.borderColor=K.teal;e.currentTarget.style.color=K.teal;}}
               onMouseLeave={e=>{e.currentTarget.style.borderColor=K.border;e.currentTarget.style.color=K.muted;}}>
               {l}
@@ -1295,7 +1295,7 @@ function ToneFinder({hearingResults, onComplete}) {
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:5}}>
           {[{l:"−1¢ (micro)",c:-1},{l:"+1¢ (micro)",c:1}].map(({l,c})=>(
             <button key={l} onClick={()=>applyFcents(c)}
-              style={{padding:"7px 4px",background:"transparent",border:`1px solid ${K.border}`,borderRadius:6,color:K.muted,fontSize:9,fontFamily:"'Courier New',monospace",transition:"all 0.15s"}}
+              style={{padding:"7px 4px",background:"transparent",border:`1px solid ${K.border}`,borderRadius:6,color:K.muted,fontSize:12,fontFamily:"'Courier New',monospace",transition:"all 0.15s"}}
               onMouseEnter={e=>{e.currentTarget.style.borderColor=K.teal;e.currentTarget.style.color=K.teal;}}
               onMouseLeave={e=>{e.currentTarget.style.borderColor=K.border;e.currentTarget.style.color=K.muted;}}>
               {l}
@@ -1308,7 +1308,7 @@ function ToneFinder({hearingResults, onComplete}) {
       {nihlNotch && (
         <Panel s={{marginBottom:14,borderColor:K.amber+"66"}} ch={<>
           <Lbl t="⚠ NOISE-INDUCED PATTERN DETECTED" c={K.amber} s={{marginBottom:8}}/>
-          <Lbl t={<>Your {nihlNotch.ear} ear shows a classic high-frequency notch at <span style={{color:K.text}}>{hzFmt(nihlNotch.freq)}</span> (≥15 dB worse than neighbours). This noise-induced hearing loss pattern is the most common co-factor for tinnitus. Your tinnitus pitch is typically <span style={{color:K.teal}}>one octave above the notch</span> — try {hzFmt(nihlNotch.freq*2)} as a starting point.</>} s={{lineHeight:1.9,fontSize:10}}/>
+          <Lbl t={<>Your {nihlNotch.ear} ear shows a classic high-frequency notch at <span style={{color:K.text}}>{hzFmt(nihlNotch.freq)}</span> (≥15 dB worse than neighbours). This noise-induced hearing loss pattern is the most common co-factor for tinnitus. Your tinnitus pitch is typically <span style={{color:K.teal}}>one octave above the notch</span> — try {hzFmt(nihlNotch.freq*2)} as a starting point.</>} s={{lineHeight:1.9,fontSize:13}}/>
         </>}/>
       )}
 
@@ -1316,7 +1316,7 @@ function ToneFinder({hearingResults, onComplete}) {
       {slopeRec && (
         <Panel s={{marginBottom:14,borderColor:"#fd79a844"}} ch={<>
           <Lbl t="💡 NOISE TYPE SUGGESTION" c="#fd79a8" s={{marginBottom:6}}/>
-          <Lbl t="Your audiogram shows a steep high-frequency slope. In the therapy step, pink noise (−3 dB/octave) will be more comfortable and effective than white noise — it won't over-stimulate your already-stressed high-frequency hair cells." s={{lineHeight:1.9,fontSize:10}}/>
+          <Lbl t="Your audiogram shows a steep high-frequency slope. In the therapy step, pink noise (−3 dB/octave) will be more comfortable and effective than white noise — it won't over-stimulate your already-stressed high-frequency hair cells." s={{lineHeight:1.9,fontSize:13}}/>
         </>}/>
       )}
 
@@ -1329,7 +1329,7 @@ function ToneFinder({hearingResults, onComplete}) {
               <button key={p} onClick={()=>{applyF(p);if(!playing)startTone();}}
                 style={{padding:"11px 4px",background:near?"rgba(0,212,180,0.1)":"transparent",
                   border:`1px solid ${near?K.teal:K.border}`,borderRadius:6,
-                  color:near?K.teal:K.muted,fontSize:11,fontFamily:"'Courier New',monospace",transition:"all 0.2s"}}>
+                  color:near?K.teal:K.muted,fontSize:14,fontFamily:"'Courier New',monospace",transition:"all 0.2s"}}>
                 {p>=1000?`${p/1000}kHz`:`${p}Hz`}
               </button>
             );
@@ -1355,7 +1355,7 @@ function ToneFinder({hearingResults, onComplete}) {
             <SldC val={vol} min={5} max={80} step={1} cls="sl-teal" color={K.teal} onCh={setVol}/>
             {/* Low-vol hint when no audiogram and volume is still quiet */}
             {!hearingResults && vol < 50 && (
-              <div style={{marginTop:6,padding:"5px 8px",background:"rgba(255,165,2,0.07)",border:"1px solid rgba(255,165,2,0.25)",borderRadius:5,fontSize:9,fontFamily:"'Courier New',monospace",color:K.amber,lineHeight:1.7}}>
+              <div style={{marginTop:6,padding:"5px 8px",background:"rgba(255,165,2,0.07)",border:"1px solid rgba(255,165,2,0.25)",borderRadius:5,fontSize:12,fontFamily:"'Courier New',monospace",color:K.amber,lineHeight:1.7}}>
                 Can't hear the tone? Raise volume above 55, or turn up system audio
               </div>
             )}
@@ -1365,7 +1365,7 @@ function ToneFinder({hearingResults, onComplete}) {
               if (!t) return null;
               const audible = vol > t.avg;
               return (
-                <div style={{marginTop:7,padding:"5px 8px",background:K.dim,borderRadius:5,fontSize:9,fontFamily:"'Courier New',monospace",lineHeight:1.7}}>
+                <div style={{marginTop:7,padding:"5px 8px",background:K.dim,borderRadius:5,fontSize:12,fontFamily:"'Courier New',monospace",lineHeight:1.7}}>
                   <span style={{color:K.sub}}>Threshold @ {hzFmt(t.freq)}: </span>
                   <span style={{color:t.cat.color}}>{Math.round(t.L)}L / {Math.round(t.R)}R dBHL</span>
                   <span style={{color:audible?K.teal:K.red,marginLeft:8}}>{audible?"✓ audible":"↑ raise vol"}</span>
@@ -1374,23 +1374,23 @@ function ToneFinder({hearingResults, onComplete}) {
             })()}
           </div>
           <button onClick={sweeping?()=>{clearInterval(sweepR.current);setSweeping(false);}:startSweep}
-            style={{width:"100%",padding:"11px",background:sweeping?"rgba(255,165,2,0.1)":"transparent",border:`1px solid ${sweeping?K.amber:K.border}`,borderRadius:6,color:sweeping?K.amber:K.muted,fontSize:11,fontFamily:"'Courier New',monospace",transition:"all 0.2s",marginBottom:8}}>
+            style={{width:"100%",padding:"11px",background:sweeping?"rgba(255,165,2,0.1)":"transparent",border:`1px solid ${sweeping?K.amber:K.border}`,borderRadius:6,color:sweeping?K.amber:K.muted,fontSize:14,fontFamily:"'Courier New',monospace",transition:"all 0.2s",marginBottom:8}}>
             {sweeping?"⏹ STOP SWEEP":"↕ AUTO SWEEP (200 Hz– 20 kHz)"}
           </button>
-          <Lbl t="Slowly scans the full range — listen for when the tone fuses with your tinnitus" s={{lineHeight:1.8,fontSize:10}}/>
+          <Lbl t="Slowly scans the full range — listen for when the tone fuses with your tinnitus" s={{lineHeight:1.8,fontSize:13}}/>
         </>}/>
       </div>
 
       <Panel s={{marginBottom:14,borderColor:K.dim}} ch={<>
         <Lbl t="💡 TIPS" s={{marginBottom:8}}/>
-        <Lbl t={<>▸ Use Auto Sweep and listen for when the tone "fuses" with or disappears into your ringing<br/>▸ Use −semi/+semi (100¢) for fast tuning; −10¢/+10¢ for fine adjustment; ±1¢ for micro-tuning<br/>▸ Use L / BOTH / R buttons to isolate which ear hears the tinnitus tone<br/>▸ Sine wave matches a pure whistle — try others for buzzy or hissy tinnitus<br/>▸ Most high-pitched tinnitus sits between 6 kHz and 16 kHz; ultra-high up to 20 kHz is possible</>} s={{lineHeight:1.9,fontSize:10}}/>
+        <Lbl t={<>▸ Use Auto Sweep and listen for when the tone "fuses" with or disappears into your ringing<br/>▸ Use −semi/+semi (100¢) for fast tuning; −10¢/+10¢ for fine adjustment; ±1¢ for micro-tuning<br/>▸ Use L / BOTH / R buttons to isolate which ear hears the tinnitus tone<br/>▸ Sine wave matches a pure whistle — try others for buzzy or hissy tinnitus<br/>▸ Most high-pitched tinnitus sits between 6 kHz and 16 kHz; ultra-high up to 20 kHz is possible</>} s={{lineHeight:1.9,fontSize:13}}/>
       </>}/>
 
       <div style={{textAlign:"center"}}>
         <button onClick={()=>{stopTone();onComplete(fRef.current, volRef.current, earRef.current);}} style={{fontFamily:"system-ui",fontWeight:700,fontSize:14,letterSpacing:"0.12em",padding:"16px 48px",background:"rgba(0,212,180,0.08)",border:`1px solid ${K.teal}`,borderRadius:8,color:K.teal}}>
           MATCHED: {hzFmt(dispHz)} → VERIFY OCTAVE
         </button>
-        <Lbl t="Next step confirms you haven't accidentally matched the wrong octave" s={{textAlign:"center",marginTop:8,fontSize:10}}/>
+        <Lbl t="Next step confirms you haven't accidentally matched the wrong octave" s={{textAlign:"center",marginTop:8,fontSize:13}}/>
       </div>
     </div>
   );
@@ -1652,15 +1652,15 @@ function NoiseTherapy({tinnitusFreq:initF, hearingResults, noiseTypeOnly}) {
       <div style={{textAlign:"center",marginBottom:20}}>
         <Big t="SOUND THERAPY"/>
         {noiseTypeOnly
-          ? <Lbl t="BROADBAND MASKING · NOISE-TYPE TINNITUS" s={{textAlign:"center",marginTop:5,fontSize:11}}/>
-          : <Lbl t={<>NOTCHED NOISE · TARGET: <span style={{color:K.red}}>{hzFmt(dispF)}</span></>} s={{textAlign:"center",marginTop:5,fontSize:11}}/>
+          ? <Lbl t="BROADBAND MASKING · NOISE-TYPE TINNITUS" s={{textAlign:"center",marginTop:5,fontSize:14}}/>
+          : <Lbl t={<>NOTCHED NOISE · TARGET: <span style={{color:K.red}}>{hzFmt(dispF)}</span></>} s={{textAlign:"center",marginTop:5,fontSize:14}}/>
         }
       </div>
 
       {noiseTypeOnly && (
         <Panel s={{marginBottom:14,borderColor:"#1e2a3e"}} ch={<>
           <Lbl t="ℹ BROADBAND MODE" c="#a29bfe" s={{marginBottom:8}}/>
-          <Lbl t="Since your tinnitus is noise-type rather than tonal, the notch filter has been disabled. Broadband sound (white, pink, or brown noise) reduces the perceived loudness of your tinnitus through masking, lowers stress, and aids sleep — all clinically validated benefits." s={{lineHeight:1.9,fontSize:11}}/>
+          <Lbl t="Since your tinnitus is noise-type rather than tonal, the notch filter has been disabled. Broadband sound (white, pink, or brown noise) reduces the perceived loudness of your tinnitus through masking, lowers stress, and aids sleep — all clinically validated benefits." s={{lineHeight:1.9,fontSize:14}}/>
         </>}/>
       )}
 
@@ -1674,7 +1674,7 @@ function NoiseTherapy({tinnitusFreq:initF, hearingResults, noiseTypeOnly}) {
             <Lbl t="🔴 TINNITUS FREQUENCY (NOTCH CENTER)"/>
             <div style={{textAlign:"right"}}>
               <Big t={hzFmt(dispF)} sz={22} c={K.red}/>
-              <Lbl t={`ERB notch: ±${Math.round(erbHz(dispF)/2)} Hz (${erbWidth.toFixed(2)} oct)`} s={{fontSize:9,marginTop:2}}/>
+              <Lbl t={`ERB notch: ±${Math.round(erbHz(dispF)/2)} Hz (${erbWidth.toFixed(2)} oct)`} s={{fontSize:12,marginTop:2}}/>
             </div>
           </div>
           <input type="range" min={0} max={SMAX} step={1}
@@ -1688,7 +1688,7 @@ function NoiseTherapy({tinnitusFreq:initF, hearingResults, noiseTypeOnly}) {
           <div style={{display:"grid",gridTemplateColumns:"repeat(6,1fr)",gap:5}}>
             {[{l:"-1k",d:-1000},{l:"-100",d:-100},{l:"-10",d:-10},{l:"+10",d:+10},{l:"+100",d:+100},{l:"+1k",d:+1000}].map(({l,d})=>(
               <button key={l} onClick={()=>fineTune(d)}
-                style={{padding:"8px 2px",background:"transparent",border:`1px solid ${K.border}`,borderRadius:5,color:K.muted,fontSize:10,fontFamily:"'Courier New',monospace",transition:"all 0.15s"}}
+                style={{padding:"8px 2px",background:"transparent",border:`1px solid ${K.border}`,borderRadius:5,color:K.muted,fontSize:13,fontFamily:"'Courier New',monospace",transition:"all 0.15s"}}
                 onMouseEnter={e=>{e.currentTarget.style.borderColor=K.red;e.currentTarget.style.color=K.red;}}
                 onMouseLeave={e=>{e.currentTarget.style.borderColor=K.border;e.currentTarget.style.color=K.muted;}}>
                 {l}Hz
@@ -1724,7 +1724,7 @@ function NoiseTherapy({tinnitusFreq:initF, hearingResults, noiseTypeOnly}) {
               </div>
               <div style={{display:"flex",gap:6}}>
                 {[{l:"OFF",v:0},{l:"15m",v:15},{l:"30m",v:30},{l:"60m",v:60}].map(({l,v})=>(
-                  <button key={v} onClick={()=>setSleepMins(v)} style={{flex:1,padding:"7px 4px",background:sleepMins===v?"rgba(0,212,180,0.1)":"transparent",border:`1px solid ${sleepMins===v?K.teal:K.border}`,borderRadius:5,color:sleepMins===v?K.teal:K.muted,fontSize:10,fontFamily:"'Courier New',monospace",transition:"all 0.15s"}}>
+                  <button key={v} onClick={()=>setSleepMins(v)} style={{flex:1,padding:"7px 4px",background:sleepMins===v?"rgba(0,212,180,0.1)":"transparent",border:`1px solid ${sleepMins===v?K.teal:K.border}`,borderRadius:5,color:sleepMins===v?K.teal:K.muted,fontSize:13,fontFamily:"'Courier New',monospace",transition:"all 0.15s"}}>
                     {l}
                   </button>
                 ))}
@@ -1737,7 +1737,7 @@ function NoiseTherapy({tinnitusFreq:initF, hearingResults, noiseTypeOnly}) {
       <Panel s={{marginBottom:14}} ch={<>
         <Lbl t="NOISE TYPE" s={{marginBottom:10}}/>
         {slopeRec && (
-          <div style={{padding:"7px 10px",background:"rgba(253,121,168,0.07)",border:"1px solid rgba(253,121,168,0.3)",borderRadius:7,marginBottom:10,fontFamily:"'Courier New',monospace",fontSize:9,lineHeight:1.7,color:"#fd79a8"}}>
+          <div style={{padding:"7px 10px",background:"rgba(253,121,168,0.07)",border:"1px solid rgba(253,121,168,0.3)",borderRadius:7,marginBottom:10,fontFamily:"'Courier New',monospace",fontSize:12,lineHeight:1.7,color:"#fd79a8"}}>
             Your sloping audiogram → <strong>pink noise recommended</strong> (softer highs, easier on damaged hair cells)
           </div>
         )}
@@ -1746,10 +1746,10 @@ function NoiseTherapy({tinnitusFreq:initF, hearingResults, noiseTypeOnly}) {
             <button key={n.id} onClick={()=>setNType(n.id)} style={{padding:"12px",textAlign:"left",background:nType===n.id?"rgba(255,255,255,0.03)":"transparent",border:`1px solid ${nType===n.id?n.color:K.border}`,borderRadius:8,transition:"all 0.15s"}}>
               <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:4}}>
                 <div style={{width:7,height:7,borderRadius:"50%",background:n.color,flexShrink:0}}/>
-                <Lbl t={n.label} c={nType===n.id?n.color:K.muted} s={{fontSize:11}}/>
+                <Lbl t={n.label} c={nType===n.id?n.color:K.muted} s={{fontSize:14}}/>
                 {n.rec&&!noiseTypeOnly&&<Lbl t="REC" s={{fontSize:8,color:K.teal,border:`1px solid ${K.teal}`,borderRadius:2,padding:"1px 4px"}}/>}
               </div>
-              <Lbl t={n.desc} s={{fontSize:10,lineHeight:1.5}}/>
+              <Lbl t={n.desc} s={{fontSize:13,lineHeight:1.5}}/>
             </button>
           ))}
         </div>
@@ -1760,15 +1760,15 @@ function NoiseTherapy({tinnitusFreq:initF, hearingResults, noiseTypeOnly}) {
           <Lbl t="VOLUME" s={{marginBottom:6}}/>
           <Big t={`${vol} dB`} sz={26} c="#a29bfe" s={{marginBottom:10}}/>
           <SldC val={vol} min={5} max={90} step={1} cls="sl-purple" color="#a29bfe" onCh={setVol}/>
-          <Lbl t="▸ Set BELOW tinnitus loudness — do not mask it. Masking prevents habituation. You should still be able to hear your tinnitus faintly beneath the noise." s={{marginTop:8,lineHeight:1.8,fontSize:10,color:K.amber}}/>
+          <Lbl t="▸ Set BELOW tinnitus loudness — do not mask it. Masking prevents habituation. You should still be able to hear your tinnitus faintly beneath the noise." s={{marginTop:8,lineHeight:1.8,fontSize:13,color:K.amber}}/>
         </>}/>
         {!noiseTypeOnly && (
           <Panel ch={<>
             <Lbl t="NOTCH DEPTH" s={{marginBottom:6}}/>
-            <Big t={<>–{nDepth} <span style={{fontSize:11}}>dB</span></>} sz={26} c="#4ade80" s={{marginBottom:10}}/>
+            <Big t={<>–{nDepth} <span style={{fontSize:14}}>dB</span></>} sz={26} c="#4ade80" s={{marginBottom:10}}/>
             <SldC val={nDepth} min={10} max={60} step={5} cls="sl-teal" color="#4ade80" onCh={setNDepth}/>
-            <Lbl t="Width auto-calculated from ERB at your frequency — no guesswork needed." s={{marginTop:8,lineHeight:1.8,fontSize:10}}/>
-            <Lbl t={`Notch: ${hzFmt(Math.round(dispF/Math.pow(2,erbWidth*0.5)))} – ${hzFmt(Math.round(dispF*Math.pow(2,erbWidth*0.5)))}`} c={K.teal} s={{fontSize:9,marginTop:4}}/>
+            <Lbl t="Width auto-calculated from ERB at your frequency — no guesswork needed." s={{marginTop:8,lineHeight:1.8,fontSize:13}}/>
+            <Lbl t={`Notch: ${hzFmt(Math.round(dispF/Math.pow(2,erbWidth*0.5)))} – ${hzFmt(Math.round(dispF*Math.pow(2,erbWidth*0.5)))}`} c={K.teal} s={{fontSize:12,marginTop:4}}/>
           </>}/>
         )}
       </div>
@@ -1782,15 +1782,15 @@ function NoiseTherapy({tinnitusFreq:initF, hearingResults, noiseTypeOnly}) {
               const ct=catFor(avg);
               return (
                 <div key={ear} style={{flex:1,background:K.dim,borderRadius:8,padding:"10px 12px"}}>
-                  <Lbl t={ear==="left"?"◄ LEFT":"RIGHT ►"} s={{fontSize:9,marginBottom:4}}/>
-                  <Big t={<>{Math.round(avg)}<span style={{fontSize:10}}> dBHL</span></>} sz={18} c={ct.color}/>
-                  <Lbl t={ct.label} c={ct.color} s={{fontSize:9}}/>
+                  <Lbl t={ear==="left"?"◄ LEFT":"RIGHT ►"} s={{fontSize:12,marginBottom:4}}/>
+                  <Big t={<>{Math.round(avg)}<span style={{fontSize:13}}> dBHL</span></>} sz={18} c={ct.color}/>
+                  <Lbl t={ct.label} c={ct.color} s={{fontSize:12}}/>
                 </div>
               );
             })}
           </div>
           {thrAtF && (
-            <div style={{marginTop:10,padding:"8px 10px",background:K.bg,borderRadius:7,fontFamily:"'Courier New',monospace",fontSize:9,lineHeight:1.8}}>
+            <div style={{marginTop:10,padding:"8px 10px",background:K.bg,borderRadius:7,fontFamily:"'Courier New',monospace",fontSize:12,lineHeight:1.8}}>
               <span style={{color:K.sub}}>Threshold at tinnitus freq ({hzFmt(thrAtF.freq)}): </span>
               <span style={{color:thrAtF.cat.color}}>{Math.round(thrAtF.L)}L / {Math.round(thrAtF.R)}R dBHL</span>
               <br/>
@@ -1803,7 +1803,7 @@ function NoiseTherapy({tinnitusFreq:initF, hearingResults, noiseTypeOnly}) {
       <Panel s={{marginBottom:14,borderColor:K.dim}} ch={<>
         <Lbl t={noiseTypeOnly ? "📖 ABOUT BROADBAND MASKING" : "📖 ABOUT NOTCHED NOISE THERAPY"} s={{marginBottom:8}}/>
         {noiseTypeOnly ? (
-          <Lbl t="Broadband noise reduces the perceived signal-to-noise ratio of your tinnitus, providing relief without requiring a frequency match. It also reduces stress and helps with sleep. Unlike masking, setting the volume below tinnitus level allows the brain to habituate over time." s={{lineHeight:1.9,fontSize:10}}/>
+          <Lbl t="Broadband noise reduces the perceived signal-to-noise ratio of your tinnitus, providing relief without requiring a frequency match. It also reduces stress and helps with sleep. Unlike masking, setting the volume below tinnitus level allows the brain to habituate over time." s={{lineHeight:1.9,fontSize:13}}/>
         ) : (
           <Lbl t={<>
             By removing sound energy at <span style={{color:K.red}}>{hzFmt(dispF)}</span>, lateral inhibition is triggered in adjacent auditory neurons, gradually suppressing the hyperactive cells causing your tinnitus (TMNMT — tailor-made notched noise therapy).<br/><br/>
@@ -1811,7 +1811,7 @@ function NoiseTherapy({tinnitusFreq:initF, hearingResults, noiseTypeOnly}) {
             ▸ Works best for tonal (not noise-type) tinnitus<br/>
             ▸ Not all studies show benefit vs. unnotched sound — some people respond, others don't<br/>
             ▸ Recommended: 60–120 min daily for 3–6+ months
-          </>} s={{lineHeight:1.9,fontSize:10}}/>
+          </>} s={{lineHeight:1.9,fontSize:13}}/>
         )}
       </>}/>
 
@@ -1821,29 +1821,29 @@ function NoiseTherapy({tinnitusFreq:initF, hearingResults, noiseTypeOnly}) {
           <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10,textAlign:"center"}}>
             <div style={{background:K.dim,borderRadius:8,padding:"10px 4px"}}>
               <Big t={sessions.length} sz={22} c={K.teal}/>
-              <Lbl t="sessions" s={{fontSize:9,marginTop:2}}/>
+              <Lbl t="sessions" s={{fontSize:12,marginTop:2}}/>
             </div>
             <div style={{background:K.dim,borderRadius:8,padding:"10px 4px"}}>
               <Big t={`${totalHours}h`} sz={22} c={K.amber}/>
-              <Lbl t="total time" s={{fontSize:9,marginTop:2}}/>
+              <Lbl t="total time" s={{fontSize:12,marginTop:2}}/>
             </div>
             <div style={{background:K.dim,borderRadius:8,padding:"10px 4px"}}>
               <Big t={streak} sz={22} c="#a29bfe"/>
-              <Lbl t={`day streak`} s={{fontSize:9,marginTop:2}}/>
+              <Lbl t={`day streak`} s={{fontSize:12,marginTop:2}}/>
             </div>
           </div>
-          <Lbl t="Sessions > 30 s are saved automatically. Aim for 60–120 min daily for best results." s={{marginTop:10,lineHeight:1.8,fontSize:10}}/>
+          <Lbl t="Sessions > 30 s are saved automatically. Aim for 60–120 min daily for best results." s={{marginTop:10,lineHeight:1.8,fontSize:13}}/>
         </>}/>
       )}
 
       <Panel s={{borderColor:"#1a1a3e",cursor:"pointer"}} ch={<>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}} onClick={()=>setShowBimodal(b=>!b)}>
-          <Lbl t="🧪 NOT GETTING RESULTS? CLINICAL OPTIONS EXIST" c="#a29bfe" s={{fontSize:11}}/>
-          <Lbl t={showBimodal?"▲ HIDE":"▼ SHOW"} c="#a29bfe" s={{fontSize:9}}/>
+          <Lbl t="🧪 NOT GETTING RESULTS? CLINICAL OPTIONS EXIST" c="#a29bfe" s={{fontSize:14}}/>
+          <Lbl t={showBimodal?"▲ HIDE":"▼ SHOW"} c="#a29bfe" s={{fontSize:12}}/>
         </div>
         {showBimodal && (
           <div style={{marginTop:12}}>
-            <Lbl t="The most promising clinical treatment (2024) is bimodal neuromodulation — combining sound with mild electrical tongue stimulation. The FDA-approved Lenire device achieved a 91.5% responder rate in a 220-patient real-world study, significantly outperforming sound-only therapy. The tongue stimulation activates the trigeminal nerve, driving spike-timing-dependent plasticity in the auditory brainstem that resets the maladaptive synchrony causing tinnitus. Used 60 min/day for 6–12 weeks. Requires a clinical fitting — search for Lenire providers or contact an audiologist who offers tinnitus neuromodulation." s={{lineHeight:1.9,fontSize:10}}/>
+            <Lbl t="The most promising clinical treatment (2024) is bimodal neuromodulation — combining sound with mild electrical tongue stimulation. The FDA-approved Lenire device achieved a 91.5% responder rate in a 220-patient real-world study, significantly outperforming sound-only therapy. The tongue stimulation activates the trigeminal nerve, driving spike-timing-dependent plasticity in the auditory brainstem that resets the maladaptive synchrony causing tinnitus. Used 60 min/day for 6–12 weeks. Requires a clinical fitting — search for Lenire providers or contact an audiologist who offers tinnitus neuromodulation." s={{lineHeight:1.9,fontSize:13}}/>
           </div>
         )}
       </>}/>
@@ -1869,11 +1869,11 @@ class ErrorBoundary extends Component {
         <div style={{background:"#0f0508",border:"1px solid #ff4757",borderRadius:12,padding:24,margin:20,fontFamily:"'Courier New',monospace"}}>
           <div style={{color:"#ff4757",fontSize:13,letterSpacing:"0.12em",marginBottom:12}}>⛔ RENDER ERROR CAUGHT</div>
           <div style={{color:"#ff9f9f",fontSize:12,marginBottom:16,lineHeight:1.7}}>{String(this.state.error)}</div>
-          <div style={{color:"#664444",fontSize:10,lineHeight:1.8,whiteSpace:"pre-wrap",maxHeight:240,overflow:"auto"}}>
+          <div style={{color:"#664444",fontSize:13,lineHeight:1.8,whiteSpace:"pre-wrap",maxHeight:240,overflow:"auto"}}>
             {this.state.info?.componentStack}
           </div>
           <button onClick={()=>this.setState({error:null,info:null})}
-            style={{marginTop:16,padding:"8px 20px",background:"rgba(255,71,87,0.12)",border:"1px solid #ff4757",borderRadius:6,color:"#ff4757",cursor:"pointer",fontFamily:"'Courier New',monospace",fontSize:11}}>
+            style={{marginTop:16,padding:"8px 20px",background:"rgba(255,71,87,0.12)",border:"1px solid #ff4757",borderRadius:6,color:"#ff4757",cursor:"pointer",fontFamily:"'Courier New',monospace",fontSize:14}}>
             RETRY
           </button>
         </div>
@@ -1894,7 +1894,7 @@ function NavBar({phase, onBack, onRestart}) {
         padding:"7px 14px",background:"transparent",
         border:`1px solid ${canBack?K.border:"transparent"}`,
         borderRadius:6,color:canBack?K.muted:"transparent",
-        fontFamily:"'Courier New',monospace",fontSize:11,
+        fontFamily:"'Courier New',monospace",fontSize:14,
         cursor:canBack?"pointer":"default",transition:"all 0.15s",
         pointerEvents:canBack?"auto":"none",
       }}
@@ -1907,7 +1907,7 @@ function NavBar({phase, onBack, onRestart}) {
         <button onClick={onRestart} style={{
           padding:"7px 14px",background:"transparent",
           border:`1px solid ${K.border}`,borderRadius:6,
-          color:K.muted,fontFamily:"'Courier New',monospace",fontSize:11,
+          color:K.muted,fontFamily:"'Courier New',monospace",fontSize:14,
           cursor:"pointer",transition:"all 0.15s",
         }}
           onMouseEnter={e=>(e.currentTarget.style.borderColor="#ff4757",e.currentTarget.style.color="#ff4757")}
