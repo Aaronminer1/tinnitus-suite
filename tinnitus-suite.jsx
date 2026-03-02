@@ -42,7 +42,9 @@ const K = {
 
 // ─── Utilities ────────────────────────────────────────────────────────────────
 const mkCtx = () => new (window.AudioContext || window.webkitAudioContext)();
-const dBtoG = (db) => Math.max(1e-6, Math.pow(10, (db - 60) / 20));
+// Reference at 80 dB → gain=1.0 dBFS; safe peak is 0.9 (-1 dBFS).
+// Old ref=60 caused gain≥1.0 at vol≥60 → hard digital clipping.
+const dBtoG = (db) => Math.min(0.9, Math.max(1e-6, Math.pow(10, (db - 80) / 20)));
 const catFor = (db) => CATS.find(c => db <= c.max) || CATS[CATS.length-1];
 const hzFmt  = (f)  => f >= 1000 ? `${(f/1000).toFixed(2)} kHz` : `${Math.round(f)} Hz`;
 
@@ -310,7 +312,7 @@ function OctaveCheck({freq, vol, earRoute, onConfirm, onOctaveUp, onOctaveDown})
     const g = ctx.createGain();
     g.gain.setValueAtTime(0, ctx.currentTime);
     // Inherit volume from ToneFinder — same perceived level for a fair octave comparison
-    g.gain.linearRampToValueAtTime(dBtoG(vol || 55), ctx.currentTime + 0.08);
+    g.gain.linearRampToValueAtTime(dBtoG(vol || 65), ctx.currentTime + 0.08);
     o.type = "sine"; o.frequency.value = hz;
     o.connect(g);
     // Route to same ear the tinnitus was matched in
@@ -1050,11 +1052,11 @@ function ToneFinder({hearingResults, onComplete}) {
   })();
 
   // ── Hearing-data-derived initialisation ──────────────────────────────────
-  // Start volume = threshold at initF + 10 dB sensation level (just audible above threshold)
-  // Without a calibrated audiogram, default to 55 — gives gain≈0.56, audible through speakers.
-  // (vol=35 → gain=0.056 which is near-silent on a laptop)
+  // Start volume = threshold at initF + 10 dB sensation level.
+  // Reference now at 80 dB (=0.9 gain). Floor at 62 ensures gain≥0.12 — audible after calibration.
+  // Without audiogram, default 65 → gain≈0.17 (clearly above CAL_GAIN=0.10 threshold reference).
   const initThr   = nearestThresh(initF, hearingResults);
-  const initVol   = initThr ? Math.min(70, Math.max(45, Math.round(initThr.avg) + 10)) : 55;
+  const initVol   = initThr ? Math.min(75, Math.max(62, Math.round(initThr.avg) + 10)) : 65;
 
   // Default ear routing to the ear with worse high-frequency average (2k–12k)
   const worseEar  = (() => {
@@ -1422,10 +1424,10 @@ function NoiseTherapy({tinnitusFreq:initF, hearingResults, noiseTypeOnly}) {
   const {f2s, s2f, SMAX} = logSlider(500, 20000);
 
   // Hearing-calibrated initial volume = threshold at tinnitus freq + 5 dB (just audible)
-  // Without audiogram, default to 55 — gives gain≈0.56, audible on speakers.
-  // (vol=40 → gain=0.10 which can be inaudible on laptop speakers)
+  // Without audiogram, default to 65 → gain≈0.17, clearly audible after calibration.
+  // Floor at 62 → gain≥0.12, always above the CAL_GAIN threshold reference (0.10).
   const thrAtF   = nearestThresh(initF, hearingResults);
-  const initVol  = thrAtF ? Math.min(65, Math.max(45, Math.round(thrAtF.avg) + 5)) : 55;
+  const initVol  = thrAtF ? Math.min(75, Math.max(62, Math.round(thrAtF.avg) + 5)) : 65;
 
   // Audiogram slope: steep high-freq slope → recommend pink noise carrier
   const slopeRec = (() => {
@@ -1780,7 +1782,7 @@ function NoiseTherapy({tinnitusFreq:initF, hearingResults, noiseTypeOnly}) {
         <Panel ch={<>
           <Lbl t="VOLUME" s={{marginBottom:6}}/>
           <Big t={`${vol} dB`} sz={26} c="#a29bfe" s={{marginBottom:10}}/>
-          <SldC val={vol} min={5} max={90} step={1} cls="sl-purple" color="#a29bfe" onCh={setVol}/>
+          <SldC val={vol} min={5} max={80} step={1} cls="sl-purple" color="#a29bfe" onCh={setVol}/>
           <Lbl t="▸ Set BELOW tinnitus loudness — do not mask it. Masking prevents habituation. You should still be able to hear your tinnitus faintly beneath the noise." s={{marginTop:8,lineHeight:1.8,fontSize:13,color:K.amber}}/>
         </>}/>
         {!noiseTypeOnly && (
