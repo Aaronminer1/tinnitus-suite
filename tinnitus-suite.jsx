@@ -1935,7 +1935,7 @@ class ErrorBoundary extends Component {
 
 // ─── Nav Bar ─────────────────────────────────────────────────────────────────
 function NavBar({phase, onBack, onRestart}) {
-  const canBack = phase !== "intro" && phase !== "tintype" && phase !== "disclaimer" && phase !== "calibration";
+  const canBack = phase !== "intro" && phase !== "disclaimer" && phase !== "calibration";
   return (
     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18}}>
       <button onClick={onBack} style={{
@@ -2032,7 +2032,7 @@ export default function App() {
               savedData={hRes ? {freq: tFreq} : null}
               onResume={()=>setPhase("tone")}
               onStart={goFromIntro}
-              onSkip={()=>setPhase("tintype")}/>}
+              onSkip={goFromIntro}/>}
 
           {phase==="tintype"     &&<TinnitusTypeScreen
               onTonal={()=>setPhase("test")}
