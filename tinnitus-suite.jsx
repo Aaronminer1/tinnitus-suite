@@ -1,5 +1,26 @@
 import { useState, useRef, useEffect, useCallback, Component } from "react";
 
+// ─── Capacitor native bridge for system-wide audio notch ──────────────────────
+// Uses Android DynamicsProcessing API to apply notch filter to ALL device audio
+// (Pandora, Spotify, YouTube, etc.) — no capture/DRM issues.
+const SystemNotch = (() => {
+  try {
+    // Capacitor.Plugins is available when running inside the native shell
+    const cap = window.Capacitor;
+    if (cap && cap.Plugins && cap.Plugins.SystemNotch) return cap.Plugins.SystemNotch;
+    // Fallback: registerPlugin style (Capacitor 5+)
+    if (cap && cap.registerPlugin) return cap.registerPlugin("SystemNotch");
+  } catch (_) {}
+  // Web fallback — methods exist but always report unavailable
+  return {
+    isAvailable: async () => ({ available: false, apiLevel: 0 }),
+    enable:      async () => ({ enabled: false }),
+    disable:     async () => ({ enabled: false }),
+    setFrequency:async () => ({}),
+    getStatus:   async () => ({ enabled: false, available: false }),
+  };
+})();
+
 // ─── Constants ────────────────────────────────────────────────────────────────
 // ── Frequency presets — user selects resolution before the test starts ──────
 // Top limit is 16 kHz — 18 kHz and 20 kHz are beyond reliable consumer earbud range.
@@ -32,10 +53,11 @@ const CATS = [
 ];
 
 const NOISE_TYPES = [
-  {id:"notched",label:"Notched White",desc:"Therapeutic — silence at tinnitus frequency",color:"#00d4b4",rec:true},
-  {id:"white",  label:"White Noise",  desc:"Equal energy across all frequencies",       color:"#e2e8f0",rec:false},
-  {id:"pink",   label:"Pink Noise",   desc:"Softer highs, sounds more natural",         color:"#fd79a8",rec:false},
-  {id:"brown",  label:"Brown Noise",  desc:"Deep rumble, like rain on a rooftop",       color:"#e17055",rec:false},
+  {id:"music",   label:"Notched Music ★",desc:"Upload your music — strongest evidence (Okamoto 2010)", color:"#ffd32a",rec:true},
+  {id:"notched", label:"Notched White",   desc:"Therapeutic — silence at tinnitus frequency",            color:"#00d4b4",rec:false},
+  {id:"white",   label:"White Noise",     desc:"Equal energy across all frequencies",                    color:"#e2e8f0",rec:false},
+  {id:"pink",    label:"Pink Noise",      desc:"Softer highs, sounds more natural",                     color:"#fd79a8",rec:false},
+  {id:"brown",   label:"Brown Noise",     desc:"Deep rumble, like rain on a rooftop",                   color:"#e17055",rec:false},
 ];
 
 const K = {
@@ -150,6 +172,7 @@ const CSS = `
   .sl-red::-webkit-slider-thumb{background:${K.red};box-shadow:0 0 12px rgba(255,71,87,0.8);width:24px;height:24px;}
   .sl-purple::-webkit-slider-thumb{background:#a29bfe;box-shadow:0 0 8px rgba(162,155,254,0.6);}
   .sl-amber::-webkit-slider-thumb{background:${K.amber};box-shadow:0 0 8px rgba(255,165,2,0.6);}
+  .sl-blue::-webkit-slider-thumb{background:#74b9ff;box-shadow:0 0 8px rgba(116,185,255,0.6);}
   button{cursor:pointer;border:none;}
   button:focus{outline:none;}
   ::-webkit-scrollbar{width:4px;}
@@ -737,7 +760,7 @@ function Calibration({onConfirm, onSkip}) {
 }
 
 // ─── Hearing Test ─────────────────────────────────────────────────────────────
-function HearingTest({onComplete, onSkip}) {
+function HearingTest({onComplete, onSkip, calibrated}) {
   const [testMode, setTestMode] = useState(null); // null = show resolver screen first
   const [earIdx,  setEarIdx]  = useState(0);
   const [freqIdx, setFreqIdx] = useState(0);
@@ -748,6 +771,11 @@ function HearingTest({onComplete, onSkip}) {
   const [lastAns, setLastAns] = useState(null);
   const [earDone, setEarDone] = useState(false);
   const [hwPhase, setHwPhase] = useState("descend"); // Hughson-Westlake: descend→ascend bracketing
+  const [ascendHits, setAscendHits] = useState(0);    // count ascending "heard" at same level for 2/3 rule
+  const [ascendTrials, setAscendTrials] = useState(0); // total ascending trials at same level
+  const [catchTrialsDone, setCatchTrialsDone] = useState(0);
+  const [falsePositives, setFalsePositives]   = useState(0);
+  const [toneActuallyPlayed, setToneActuallyPlayed] = useState(false); // gate pre-tone responses
 
   // Active frequency list — derived from selected mode, used by all functions below
   const freqs  = testMode ? TEST_MODES.find(m=>m.id===testMode).freqs : FREQ_STANDARD;
@@ -778,48 +806,105 @@ function HearingTest({onComplete, onSkip}) {
     const o = ctx.createOscillator();
     const g = ctx.createGain();
     // dBtoG reference=80 → gain=0.9 at 80 dBHL, 0.10 at 60 dBHL (matches CAL_GAIN).
-    // Old formula (db-85)/20*0.6 clipped at ~89 dBHL — produced distortion harmonics
-    // heard as spurious low-pitch buzz during high-level threshold searches.
     g.gain.setValueAtTime(0, ctx.currentTime);
     g.gain.linearRampToValueAtTime(dBtoG(db), ctx.currentTime + 0.08);
     o.type = "sine"; o.frequency.value = freq;
     o.connect(g);
     if (ear !== "both" && ctx.destination.channelCount >= 2) {
-      // Route to one ear — same approach as ToneFinder (no splitter needed)
+      // Route to one ear with explicit silence on opposite channel
       const mg = ctx.createChannelMerger(2);
       g.connect(mg, 0, ear === "left" ? 0 : 1);
+      // Explicit silence on opposite channel — prevents WebView channel bleed
+      const silBuf = ctx.createBuffer(1, 128, ctx.sampleRate);
+      const silSrc = ctx.createBufferSource();
+      silSrc.buffer = silBuf; silSrc.loop = true;
+      silSrc.connect(mg, 0, ear === "left" ? 1 : 0);
+      silSrc.start();
       mg.connect(ctx.destination);
     } else { g.connect(ctx.destination); }
     o.start(); osc.current = o; gn.current = g;
+    setToneActuallyPlayed(true);
   };
 
   const advance = (res) => {
+    // Auto-save intermediate results so a crash doesn't lose the entire test
+    try { sessionStorage.setItem("ht_partial", JSON.stringify(res)); } catch(_) {}
     if (freqIdx < freqs.length-1) {
-      setFreqIdx(freqIdx+1); setDB(60); setHwPhase("descend"); setStep("ready"); setLastAns(null);
+      setFreqIdx(freqIdx+1); setDB(60); setHwPhase("descend"); setAscendHits(0); setAscendTrials(0); setStep("ready"); setLastAns(null);
     } else if (earIdx === 0) {
       setEarDone(true);
     } else {
-      onComplete(res, testMode);
+      try { sessionStorage.removeItem("ht_partial"); } catch(_) {}
+      onComplete(res, testMode, !!calibrated, falsePositives, catchTrialsDone);
     }
   };
 
   const answer = (heard) => {
     if (step !== "respond" && step !== "playing") return;
-    clearTimeout(tmr.current); stopTone(); setLastAns(heard);
+    // Gate: reject responses before tone actually played (prevents pre-tone false positives)
+    if (!toneActuallyPlayed) return;
+    clearTimeout(tmr.current); stopTone(); setLastAns(heard); setToneActuallyPlayed(false);
     const key = `${EARS[earIdx]}_${freqs[freqIdx]}`;
+
+    // Check if this was a catch trial (no-tone presentation)
+    if (step === "respond" && catchPendingR.current) {
+      catchPendingR.current = false;
+      setCatchTrialsDone(c => c + 1);
+      if (heard) setFalsePositives(fp => fp + 1); // false positive — said YES to silence
+      setTimeout(() => { setStep("ready"); setLastAns(null); }, 400);
+      return;
+    }
+
     if (heard) {
       if (hwPhase === "ascend") {
-        // Heard while ascending — this level is the threshold
-        const r = {...results, [key]: dB};
-        setResults(r); setTimeout(() => advance(r), 400);
+        // Hughson-Westlake 2-of-3 rule: need 2 ascending "heard" at same level
+        const newHits = ascendHits + 1;
+        const newTrials = ascendTrials + 1;
+        if (newHits >= 2) {
+          // Threshold confirmed at this level
+          const r = {...results, [key]: dB};
+          setResults(r); setAscendHits(0); setAscendTrials(0);
+          setTimeout(() => advance(r), 400);
+        } else if (newTrials >= 3) {
+          // 3 trials done but didn't get 2 hits — step up 5 dB and reset
+          setAscendHits(0); setAscendTrials(0);
+          const next = dB + 5;
+          if (next > 110) {
+            const r = {...results, [key]: 110};
+            setResults(r); setTimeout(() => advance(r), 400);
+          } else {
+            setDB(next); setTimeout(() => { setStep("ready"); setLastAns(null); }, 400);
+          }
+        } else {
+          setAscendHits(newHits); setAscendTrials(newTrials);
+          // Need to re-descend 10 dB and come back up per H-W protocol
+          const next = Math.max(0, dB - 10);
+          setDB(next); setTimeout(() => { setStep("ready"); setLastAns(null); }, 400);
+        }
       } else {
-        // Still descending — step down 10 dB
-        const next = Math.max(0, dB - 10);
-        setDB(next); setTimeout(() => { setStep("ready"); setLastAns(null); }, 400);
+        // Descending — step down 10 dB
+        // FIX: if already at 0 dBHL, record threshold as 0 (excellent hearing)
+        if (dB <= 0) {
+          const r = {...results, [key]: 0};
+          setResults(r); setTimeout(() => advance(r), 400);
+        } else {
+          const next = Math.max(0, dB - 10);
+          setDB(next); setTimeout(() => { setStep("ready"); setLastAns(null); }, 400);
+        }
       }
     } else {
       // Not heard — switch to ascending phase and step up 5 dB
-      if (hwPhase === "descend") setHwPhase("ascend");
+      if (hwPhase === "descend") { setHwPhase("ascend"); setAscendHits(0); setAscendTrials(0); }
+      else {
+        // Ascending miss — count as trial but not hit
+        const newTrials = ascendTrials + 1;
+        if (newTrials >= 3 && ascendHits < 2) {
+          // Failed 2/3 — step up and retry
+          setAscendHits(0); setAscendTrials(0);
+        } else {
+          setAscendTrials(newTrials);
+        }
+      }
       const next = dB + 5;
       if (next > 110) {
         const r = {...results, [key]: 110};
@@ -830,23 +915,41 @@ function HearingTest({onComplete, onSkip}) {
     }
   };
 
+  const catchPendingR = useRef(false); // true if current trial is a catch (no-tone)
   const runTrial = () => {
-    setStep("countdown"); setLastAns(null);
+    setStep("countdown"); setLastAns(null); setToneActuallyPlayed(false);
+    catchPendingR.current = false;
+
+    // ~15% chance of catch trial (no tone) for false-positive detection
+    const isCatch = Math.random() < 0.15;
+    if (isCatch) catchPendingR.current = true;
+
     let c = 3; setCdCount(c);
     const tick = setInterval(() => {
       c--;
       if (c <= 0) {
         clearInterval(tick); setCdCount(null); setStep("playing");
+        // Variable random delay 400-1600ms
         tmr.current = setTimeout(() => {
-          playTone(freqs[freqIdx], dB, EARS[earIdx]);
-          tmr.current = setTimeout(() => { stopTone(); setStep("respond"); }, 1800);
+          if (isCatch) {
+            // Catch trial — no tone, just wait then ask
+            setToneActuallyPlayed(true); // allow response
+            // Variable silence duration 1200-2200ms (matches tone duration range)
+            tmr.current = setTimeout(() => { setStep("respond"); }, 1200 + Math.random()*1000);
+          } else {
+            playTone(freqs[freqIdx], dB, EARS[earIdx]);
+            // Variable tone duration 1200-2200ms (clinical standard: 1-3s)
+            const toneDur = 1200 + Math.random() * 1000;
+            tmr.current = setTimeout(() => { stopTone(); setStep("respond"); }, toneDur);
+          }
         }, 400 + Math.random()*1200);
       } else { setCdCount(c); }
     }, 1000);
   };
 
   const switchEar = () => {
-    setEarDone(false); setEarIdx(1); setFreqIdx(0); setDB(60); setHwPhase("descend"); setStep("ready"); setLastAns(null);
+    setEarDone(false); setEarIdx(1); setFreqIdx(0); setDB(60); setHwPhase("descend");
+    setAscendHits(0); setAscendTrials(0); setStep("ready"); setLastAns(null);
   };
 
   useEffect(() => () => {
@@ -931,6 +1034,14 @@ function HearingTest({onComplete, onSkip}) {
         <Big t="PURE TONE AUDIOMETRY"/>
         <Lbl t={`${EARS[earIdx]==="left"?"◄ LEFT EAR":"RIGHT EAR ►"} · ${fLabel(freqs[freqIdx])}Hz · ${dB} dBHL`} s={{textAlign:"center",marginTop:5,fontSize:14}}/>
       </div>
+
+      {/* False-positive warning if catch-trial failure rate > 30% */}
+      {catchTrialsDone >= 2 && falsePositives / catchTrialsDone > 0.3 && (
+        <Panel s={{marginBottom:14,borderColor:K.red+"55"}} ch={<>
+          <Lbl t="⚠ RESPONSE ACCURACY CONCERN" c={K.red} s={{marginBottom:6}}/>
+          <Lbl t={`You responded "heard" to ${falsePositives} of ${catchTrialsDone} silent catch trials. This may indicate you're pressing YES before confirming the tone. Please listen carefully and only respond YES when you're certain you heard something.`} s={{lineHeight:1.8,fontSize:13}}/>
+        </>}/>
+      )}
 
       <Panel s={{marginBottom:14}} ch={<>
         <div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}>
@@ -1019,7 +1130,7 @@ function HearingTest({onComplete, onSkip}) {
           </div>
           <div style={{flex:2,borderLeft:`1px solid ${K.dim}`,paddingLeft:20}}>
             <Lbl t="HOW IT WORKS" s={{marginBottom:8}}/>
-            <Lbl t="Starting at 60 dBHL and descending 10 dB each time you hear it. When you first miss, it rises in 5 dB steps — that converging level is your threshold. This Hughson-Westlake method matches clinical ISO 8253-1 audiometry. Each ear is tested independently." s={{lineHeight:1.9,fontSize:13}}/>
+            <Lbl t="Starting at 60 dBHL and descending 10 dB each time you hear it. When you first miss, it rises in 5 dB steps. Threshold is confirmed when you hear 2-of-3 ascending presentations at the same level. ~15% of trials are silent catch trials to verify response accuracy. This Hughson-Westlake method follows clinical ISO 8253-1 audiometry. Each ear is tested independently." s={{lineHeight:1.9,fontSize:13}}/>
           </div>
         </div>
       }/>
@@ -1131,11 +1242,38 @@ function TestResults({results, onContinue}) {
       </>}/>
 
       {worstV >= 25 && (
-        <Panel s={{marginBottom:20,borderColor:K.amber+"44"}} ch={<>
+        <Panel s={{marginBottom:14,borderColor:K.amber+"44"}} ch={<>
           <Lbl t="⚠ NOTABLE FINDING" c={K.amber} s={{marginBottom:8}}/>
           <Lbl t={<>Your highest threshold was at <span style={{color:K.text}}>{hzFmt(worstF)}</span> ({Math.round(worstV)} dBHL — {catFor(worstV).label}). High-frequency loss frequently co-occurs with tinnitus. The tone finder will start here.</>} s={{lineHeight:1.9,fontSize:14}}/>
         </>}/>
       )}
+
+      {/* Asymmetric hearing warning */}
+      {(() => {
+        const asymFreqs = rf.filter(f => {
+          const l = results[`left_${f}`]||0, r = results[`right_${f}`]||0;
+          return Math.abs(l - r) >= 20;
+        });
+        if (!asymFreqs.length) return null;
+        return (
+          <Panel s={{marginBottom:14,borderColor:K.red+"44"}} ch={<>
+            <Lbl t="⚠ SIGNIFICANT EAR ASYMMETRY" c={K.red} s={{marginBottom:8}}/>
+            <Lbl t={<>Your left and right ears differ by ≥20 dB at {asymFreqs.length === 1
+              ? hzFmt(asymFreqs[0])
+              : `${asymFreqs.length} frequencies (${asymFreqs.map(f=>hzFmt(f)).join(', ')})`
+            }. A difference this large may warrant clinical evaluation. Unilateral hearing loss has causes (e.g., acoustic neuroma) that bilateral loss does not.</>} s={{lineHeight:1.9,fontSize:14}}/>
+            <div style={{display:"flex",gap:12,marginTop:10}}>
+              {asymFreqs.slice(0,4).map(f => {
+                const l=results[`left_${f}`]||0, r=results[`right_${f}`]||0;
+                return <div key={f} style={{background:K.dim,borderRadius:6,padding:"6px 10px",textAlign:"center"}}>
+                  <Lbl t={hzFmt(f)} s={{fontSize:11,marginBottom:3}}/>
+                  <div style={{fontSize:12}}><span style={{color:K.teal}}>L:{l}</span> <span style={{color:"#fd79a8"}}>R:{r}</span></div>
+                </div>;
+              })}
+            </div>
+          </>}/>
+        );
+      })()}
 
       <div style={{textAlign:"center"}}>
         <button onClick={onContinue} style={{fontFamily:"system-ui",fontWeight:700,fontSize:14,letterSpacing:"0.12em",padding:"16px 48px",background:"rgba(0,212,180,0.08)",border:`1px solid ${K.teal}`,borderRadius:8,color:K.teal}}>CONTINUE TO TONE FINDER →</button>
@@ -1309,8 +1447,20 @@ function HistoryScreen({user}) {
 }
 
 // ─── Tone Finder ──────────────────────────────────────────────────────────────
-function ToneFinder({hearingResults, onComplete}) {
+function ToneFinder({hearingResults, userId, onComplete}) {
   const {f2s, s2f, SMAX} = logSlider(200, 20000);
+
+  // ── Cross-session frequency consistency (Critique recommendation #4) ──
+  const toneHistory = userId ? uGetJ(userId, "tones", []) : [];
+  const pastFreqs   = toneHistory.map(t => t.freq).filter(Boolean);
+  const medianFreq  = pastFreqs.length >= 2
+    ? (() => { const s = [...pastFreqs].sort((a,b)=>a-b); const m = Math.floor(s.length/2); return s.length%2 ? s[m] : Math.round((s[m-1]+s[m])/2); })()
+    : null;
+  // Variance in cents (perceptually meaningful across frequencies)
+  const freqVarianceCents = pastFreqs.length >= 2 && medianFreq
+    ? Math.round(Math.sqrt(pastFreqs.reduce((s,f) => s + Math.pow(1200*Math.log2(f/medianFreq), 2), 0) / pastFreqs.length))
+    : null;
+  const highVariance = freqVarianceCents !== null && freqVarianceCents > 200; // > 2 semitones
 
   // Pick start frequency from worst test result
   const initF = (() => {
@@ -1508,6 +1658,32 @@ function ToneFinder({hearingResults, onComplete}) {
         <Big t="TINNITUS TONE FINDER"/>
         <Lbl t="MATCH THIS TONE TO YOUR TINNITUS RINGING" s={{textAlign:"center",marginTop:5,fontSize:14}}/>
       </div>
+
+      {/* Cross-session frequency consistency panel */}
+      {pastFreqs.length >= 2 && medianFreq && (
+        <Panel s={{marginBottom:14,borderColor:highVariance?K.amber+"66":K.teal+"44"}} ch={<>
+          <Lbl t={`📐 FREQUENCY CONSISTENCY (${pastFreqs.length} PREVIOUS MATCHES)`} c={highVariance?K.amber:K.teal} s={{marginBottom:8,fontSize:12}}/>
+          <div style={{display:"flex",gap:16,alignItems:"center",marginBottom:8}}>
+            <div>
+              <Lbl t="MEDIAN" s={{fontSize:10,marginBottom:2}}/>
+              <Big t={hzFmt(medianFreq)} sz={20} c={K.teal}/>
+            </div>
+            <div>
+              <Lbl t="SPREAD (±)" s={{fontSize:10,marginBottom:2}}/>
+              <Big t={`${freqVarianceCents}¢`} sz={20} c={highVariance?K.amber:"#a29bfe"}/>
+            </div>
+            <div>
+              <Lbl t="RANGE" s={{fontSize:10,marginBottom:2}}/>
+              <Big t={`${hzFmt(Math.min(...pastFreqs))} – ${hzFmt(Math.max(...pastFreqs))}`} sz={14} c={K.sub}/>
+            </div>
+          </div>
+          {highVariance ? (
+            <Lbl t="⚠ HIGH VARIANCE — your matches vary by more than 2 semitones across sessions. Take extra time to fine-tune today, and consider doing the Octave Confusion Check carefully. Inconsistent matching reduces therapy effectiveness." s={{lineHeight:1.8,fontSize:13,color:K.amber}}/>
+          ) : (
+            <Lbl t="✓ Your matches are consistent — good frequency lock. Small day-to-day variation is normal." s={{lineHeight:1.8,fontSize:13,color:K.teal}}/>
+          )}
+        </>}/>
+      )}
 
       <Panel s={{textAlign:"center",marginBottom:14,position:"relative",overflow:"hidden"}} ch={<>
         <div style={{position:"absolute",inset:0,background:playing?"radial-gradient(ellipse at 50% 0%,rgba(0,212,180,0.05),transparent 60%)":"none",pointerEvents:"none",transition:"all 0.5s"}}/>
@@ -1718,11 +1894,193 @@ function NoiseTherapy({tinnitusFreq:initF, hearingResults, noiseTypeOnly, userId
   const [dispF,    setDispF]    = useState(initF);
   const [showBimodal, setShowBimodal] = useState(false);
 
+  // ── System-wide notch state (applies to Pandora/Spotify/YouTube/etc.) ──
+  const [sysNotchAvail,   setSysNotchAvail]   = useState(false);
+  const [sysNotchEnabled, setSysNotchEnabled]  = useState(false);
+  const [sysNotchError,   setSysNotchError]    = useState(null);
+  const [streamNoiseColor, setStreamNoiseColor] = useState(slopeRec || "white"); // "white"|"pink"|"brown"
+  const [streamElapsed,   setStreamElapsed]    = useState(0);
+  const [streamSessMins,  setStreamSessMins]   = useState(60);
+  const [streamSleepMins, setStreamSleepMins]  = useState(0); // 0 = off; streaming sleep timer
+  const [streamSleepEnded,setStreamSleepEnded] = useState(false);
+  const [streamTargetHit, setStreamTargetHit]  = useState(false); // true when streaming session reaches target
+  const streamTimerR  = useRef(null);
+  const streamSleepR  = useRef(null);
+  const streamElapsedRef = useRef(0); streamElapsedRef.current = streamElapsed;
+  const silentKeepAliveR = useRef(null); // silent oscillator to keep AudioContext alive
+
+  // ── Silent audio keep-alive for streaming mode ──
+  // When streaming notch is active but in-app noise isn't playing, Android/Samsung
+  // doesn't see any audio session from our app (DynamicsProcessing on session 0
+  // is a system effect). This silent oscillator keeps the WebView AudioContext
+  // active so the OS treats us as an audio app and won't kill the process.
+  const startSilentKeepAlive = () => {
+    if (silentKeepAliveR.current) return; // already running
+    try {
+      const ctx = audio();
+      const osc  = ctx.createOscillator();
+      const gain = ctx.createGain();
+      gain.gain.value = 0; // completely inaudible
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start();
+      silentKeepAliveR.current = { osc, gain };
+    } catch (_) {}
+  };
+  const stopSilentKeepAlive = () => {
+    if (!silentKeepAliveR.current) return;
+    try {
+      silentKeepAliveR.current.osc.stop();
+      silentKeepAliveR.current.osc.disconnect();
+      silentKeepAliveR.current.gain.disconnect();
+    } catch (_) {}
+    silentKeepAliveR.current = null;
+  };
+
+  // Probe system-wide notch availability on mount
+  useEffect(() => {
+    SystemNotch.isAvailable().then(r => setSysNotchAvail(r.available)).catch(() => {});
+    // Cleanup: disable system notch and save session when leaving therapy screen
+    return () => {
+      clearInterval(streamTimerR.current);
+      clearTimeout(streamSleepR.current);
+      stopSilentKeepAlive();
+      // Save if ran > 30s (only if saveStreamSession hasn't already run)
+      if (streamElapsedRef.current > 30) {
+        saveStreamSession();
+      }
+      SystemNotch.disable().catch(() => {});
+      setSysNotchEnabled(false);
+    };
+  }, []);
+
+  const saveStreamSession = () => {
+    const dur = streamElapsedRef.current;
+    if (dur > 30) {
+      try {
+        const _uid  = userId||"__guest";
+        const saved = uGetJ(_uid,"sessions",[]);
+        saved.push({ date: new Date().toISOString(), duration: dur, frequency: tfRef.current, type: "streaming" });
+        if (saved.length > 200) saved.splice(0, saved.length - 200);
+        uSetJ(_uid,"sessions",saved);
+        setSessions([...saved]);
+      } catch(_) {}
+      // Reset to prevent duplicate save during unmount cleanup
+      streamElapsedRef.current = 0;
+    }
+  };
+
+  // Build audiogram array for native plugin (same format as hearingResults keys)
+  const buildAudiogramPayload = () => {
+    if (!hearingResults) return null;
+    const freqs = resFreqs(hearingResults).filter(f => f >= 250 && f <= 12000);
+    if (!freqs.length) return null;
+    return freqs.map(f => ({
+      freq: f,
+      left:  hearingResults[`left_${f}`]  || 0,
+      right: hearingResults[`right_${f}`] || 0,
+    }));
+  };
+
+  const toggleSysNotch = async () => {
+    setSysNotchError(null);
+    try {
+      if (sysNotchEnabled) {
+        // Stop timer and save session
+        clearInterval(streamTimerR.current);
+        clearTimeout(streamSleepR.current);
+        saveStreamSession();
+        setStreamElapsed(0);
+        setStreamTargetHit(false);
+        setStreamSleepEnded(false);
+        stopSilentKeepAlive();
+        await SystemNotch.disable();
+        setSysNotchEnabled(false);
+      } else {
+        const audiogram = buildAudiogramPayload();
+        const params = { frequency: tfRef.current, depth: -ndRef.current, noiseColor: streamNoiseColor };
+        if (audiogram) params.audiogram = audiogram;
+        const res = await SystemNotch.enable(params);
+        if (res.enabled) {
+          setSysNotchEnabled(true);
+          // Start silent audio keep-alive so Android sees an active audio session
+          startSilentKeepAlive();
+          setStreamTargetHit(false);
+          setStreamSleepEnded(false);
+          // Start timer
+          setStreamElapsed(0);
+          streamTimerR.current = setInterval(() => setStreamElapsed(e => e + 1), 1000);
+          // Start streaming sleep timer if set
+          clearTimeout(streamSleepR.current);
+          if (streamSleepMins > 0) {
+            streamSleepR.current = setTimeout(async () => {
+              clearInterval(streamTimerR.current);
+              saveStreamSession();
+              setStreamElapsed(0);
+              stopSilentKeepAlive();
+              try { await SystemNotch.disable(); } catch(_) {}
+              setSysNotchEnabled(false);
+              setStreamSleepEnded(true);
+            }, streamSleepMins * 60 * 1000);
+          }
+        }
+      }
+    } catch (e) {
+      clearInterval(streamTimerR.current);
+      clearTimeout(streamSleepR.current);
+      stopSilentKeepAlive();
+      setSysNotchError(e.message || "Failed to toggle system notch");
+      setSysNotchEnabled(false);
+    }
+  };
+
   // ERB-scaled notch width — auto-calculated, no user guess needed
+  // Capped at 40 dB: published TMNMT research used 12–20 dB. Beyond 40 dB causes biquad ringing.
   const [nDepth,   setNDepth]   = useState(30);
+
+  // Keep system notch in sync with frequency / depth / noise color changes
+  useEffect(() => {
+    if (sysNotchEnabled) {
+      SystemNotch.setFrequency({ frequency: dispF, depth: -nDepth, noiseColor: streamNoiseColor }).catch(() => {});
+    }
+  }, [dispF, nDepth, streamNoiseColor, sysNotchEnabled]);
+
+  // Detect streaming session target reached
+  useEffect(() => {
+    if (sysNotchEnabled && streamElapsed >= streamSessMins * 60 && !streamTargetHit) {
+      setStreamTargetHit(true);
+    }
+  }, [streamElapsed, streamSessMins, sysNotchEnabled, streamTargetHit]);
+
   const [sleepMins, setSleepMins] = useState(0); // 0 = off; auto-fade timer
   const [sleepEnded, setSleepEnded] = useState(false); // true after sleep timer fires
   const [sessions, setSessions] = useState(() => uGetJ(userId||"__guest","sessions",[]));
+
+  // ── Music file carrier state (Okamoto et al. 2010 — music is the evidence-based carrier) ──
+  const [musicBuf,    setMusicBuf]    = useState(null);   // decoded AudioBuffer
+  const [musicName,   setMusicName]   = useState(null);   // filename for display
+  const [musicLoading,setMusicLoading]= useState(false);
+  const musicInputRef = useRef(null);
+
+  // Decode uploaded music file into an AudioBuffer
+  const handleMusicFile = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setMusicLoading(true);
+    try {
+      const ctx = audio();
+      const arrayBuf = await file.arrayBuffer();
+      const decoded  = await ctx.decodeAudioData(arrayBuf);
+      setMusicBuf(decoded);
+      setMusicName(file.name);
+      setNType("music");
+    } catch (err) {
+      console.error("Music decode error:", err);
+      alert("Could not decode that audio file. Try MP3, WAV, OGG, or M4A.");
+    } finally {
+      setMusicLoading(false);
+    }
+  };
 
   const tfRef   = useRef(initF);
   const playRef = useRef(false); playRef.current = playing;
@@ -1732,6 +2090,10 @@ function NoiseTherapy({tinnitusFreq:initF, hearingResults, noiseTypeOnly, userId
 
   const slRef    = useRef(null);
   const canRef   = useRef(null);
+  const streamCanRef = useRef(null);  // streaming notch viz canvas
+  const streamAnimR  = useRef(null);  // streaming viz animation frame
+  const streamBarsR  = useRef(null);  // persistent bar heights for smooth animation
+  const streamColorR = useRef("white"); streamColorR.current = streamNoiseColor;
   const ac       = useRef(null);
   const srcR     = useRef(null);
   const gainR    = useRef(null);
@@ -1774,7 +2136,9 @@ function NoiseTherapy({tinnitusFreq:initF, hearingResults, noiseTypeOnly, userId
 
   const buildGraph = (type, vl, nd, tf) => {
     const ctx = audio();
-    const buf = getBuffer(type); // use cached buffer — no regeneration on param change
+    // Music type uses the uploaded AudioBuffer; noise types use generated buffers
+    const isMusic = type === "music" && musicBuf;
+    const buf = isMusic ? musicBuf : getBuffer(type);
     const src = ctx.createBufferSource(); src.buffer=buf; src.loop=true;
     const gain = ctx.createGain(); gain.gain.value = dBtoG(vl);
     const an = ctx.createAnalyser(); an.fftSize=2048; analyR.current=an;
@@ -1811,19 +2175,25 @@ function NoiseTherapy({tinnitusFreq:initF, hearingResults, noiseTypeOnly, userId
     };
     const eq = buildAudiogramEQ();
 
-    if (type === "notched") {
-      // 3-stage ERB-scaled notch cascade for therapeutic TMNMT shaping:
-      //   Stage 1 — deep tight notch at exact tinnitus frequency
-      //   Stage 2 — wider shallower notch (broadens the notch skirts)
+    if (type === "notched" || type === "music") {
+      // 1-octave notch cascade for therapeutic TMNMT shaping (Okamoto et al. 2010 PNAS):
+      //   All published TMNMT studies used a 1-octave-wide notch (tf/√2 to tf×√2).
+      //   Music carrier is the evidence-based choice — attention strengthens lateral inhibition.
+      //   3-stage biquad cascade for steep roll-off and flat rejection band:
+      //   Stage 1 — deep notch at exact tinnitus frequency
+      //   Stage 2 — wider shallower notch (broadens the notch skirts to fill 1 oct)
       //   Stage 3 — slight low-side notch (compensates for biquad asymmetry above 8kHz)
-      const ow = erbOct(tf) * 1.5;         // 1.5× ERB in octaves
-      const ho = ow * 0.5;
-      const lf = tf / Math.pow(2, ho);
-      const hf = tf * Math.pow(2, ho);
-      const Q  = tf / (hf - lf);
-      const n1 = ctx.createBiquadFilter(); n1.type="notch"; n1.frequency.value=tf;       n1.Q.value=Q;      n1.gain.value=-nd;
-      const n2 = ctx.createBiquadFilter(); n2.type="notch"; n2.frequency.value=tf;       n2.Q.value=Q*0.65; n2.gain.value=-nd*0.5;
-      const n3 = ctx.createBiquadFilter(); n3.type="notch"; n3.frequency.value=tf*0.955; n3.Q.value=Q*1.4;  n3.gain.value=-nd*0.3;
+      // Nyquist guard: clamp notch frequencies to prevent biquad instability
+      const nyq = ctx.sampleRate / 2;
+      const safeTf = Math.min(tf, nyq * 0.9); // keep notch center below 90% Nyquist
+      const ow = 1.0;                       // 1 octave (Okamoto et al. 2010)
+      const ho = ow * 0.5;                  // ±0.5 octave each side of centre
+      const lf = safeTf / Math.pow(2, ho);  // tf / √2 ≈ tf × 0.707
+      const hf = Math.min(safeTf * Math.pow(2, ho), nyq * 0.95); // clamp upper edge below Nyquist
+      const Q  = safeTf / (hf - lf);        // Q ≈ 2.41 for 1-octave notch
+      const n1 = ctx.createBiquadFilter(); n1.type="notch"; n1.frequency.value=safeTf;       n1.Q.value=Q;      n1.gain.value=-nd;
+      const n2 = ctx.createBiquadFilter(); n2.type="notch"; n2.frequency.value=safeTf;       n2.Q.value=Q*0.65; n2.gain.value=-nd*0.5;
+      const n3 = ctx.createBiquadFilter(); n3.type="notch"; n3.frequency.value=safeTf*0.955; n3.Q.value=Q*1.4;  n3.gain.value=-nd*0.3;
       src.connect(n1); n1.connect(n2); n2.connect(n3);
       if (eq) { n3.connect(eq.first); eq.last.connect(gain); }
       else    { n3.connect(gain); }
@@ -1834,6 +2204,163 @@ function NoiseTherapy({tinnitusFreq:initF, hearingResults, noiseTypeOnly, userId
     gain.connect(an); an.connect(ctx.destination);
     src.start(); srcR.current=src; gainR.current=gain;
   };
+
+  // ── Streaming notch visualizer ─────────────────────────────────────────────
+  // Simulates a music-like spectrum with the notch clearly visible.
+  // Since the system-wide filter is native (DynamicsProcessing), we don't have
+  // a WebAudio analyser node for it — so we animate a convincing music spectrum
+  // shape and cut the notch region out to visually communicate what's happening.
+  const drawStreamingViz = useCallback(() => {
+    cancelAnimationFrame(streamAnimR.current);
+    const NUM_BARS = 80;
+    if (!streamBarsR.current) {
+      streamBarsR.current = new Float32Array(NUM_BARS);
+      for (let i = 0; i < NUM_BARS; i++) streamBarsR.current[i] = Math.random() * 0.5;
+    }
+    const bars = streamBarsR.current;
+
+    const frame = () => {
+      streamAnimR.current = requestAnimationFrame(frame);
+      const cv = streamCanRef.current;
+      if (!cv) return;
+      const g = cv.getContext("2d"), W = cv.width, H = cv.height;
+      const tf = tfRef.current;
+      const loEdge = tf / Math.SQRT2;
+      const hiEdge = tf * Math.SQRT2;
+
+      // Smoothly animate bar heights — music-like random motion
+      for (let i = 0; i < NUM_BARS; i++) {
+        const target = 0.15 + Math.random() * 0.65;
+        bars[i] += (target - bars[i]) * 0.12;  // smooth interpolation
+      }
+
+      g.fillStyle = K.bg;
+      g.fillRect(0, 0, W, H);
+
+      // Frequency range: 20 Hz to 20 kHz (log scale)
+      const fMin = 20, fMax = 20000;
+      const logMin = Math.log2(fMin), logMax = Math.log2(fMax), logRange = logMax - logMin;
+
+      // Draw notch zone highlight (background)
+      const xLo = ((Math.log2(loEdge) - logMin) / logRange) * W;
+      const xHi = ((Math.log2(hiEdge) - logMin) / logRange) * W;
+      g.fillStyle = "rgba(255,71,87,0.06)";
+      g.fillRect(xLo, 0, xHi - xLo, H);
+
+      // Draw bars
+      const barW = Math.max(2, (W / NUM_BARS) - 1);
+      for (let i = 0; i < NUM_BARS; i++) {
+        // Map bar index to frequency (log scale)
+        const f = fMin * Math.pow(fMax / fMin, i / (NUM_BARS - 1));
+        const x = ((Math.log2(f) - logMin) / logRange) * W;
+
+        // Music-like spectral shape: more energy in low/mid, less in highs
+        // Apply noise color tilt: pink = -3 dB/oct, brown = -6 dB/oct (relative to 1 kHz)
+        const octFromRef = Math.log2(f / 1000);
+        const sColor = streamColorR.current;
+        const colorTilt = sColor === "brown" ? -6 * octFromRef
+                        : sColor === "pink"  ? -3 * octFromRef : 0;
+        const colorScale = Math.pow(10, colorTilt / 20); // dB to linear
+        const baseShape = (1.0 - 0.35 * (i / NUM_BARS)) * Math.max(0.05, Math.min(2.0, colorScale));
+        let h = bars[i] * baseShape;
+
+        // Apply notch attenuation
+        let notchAtten = 1.0;
+        const nd = ndRef.current;
+        if (f >= loEdge && f <= hiEdge) {
+          // Inside the notch — calculate depth based on distance from center
+          const distFromCenter = Math.abs(Math.log2(f / tf));
+          const halfWidth = 0.5; // half octave
+          const ratio = 1.0 - (distFromCenter / halfWidth);
+          notchAtten = Math.max(0.02, 1.0 - ratio * (nd / 35));
+        } else if (f >= loEdge * 0.7 && f < loEdge) {
+          // Transition in
+          const t = (f - loEdge * 0.7) / (loEdge - loEdge * 0.7);
+          notchAtten = 1.0 - t * 0.4 * (nd / 35);
+        } else if (f > hiEdge && f <= hiEdge * 1.4) {
+          // Transition out
+          const t = 1.0 - (f - hiEdge) / (hiEdge * 1.4 - hiEdge);
+          notchAtten = 1.0 - t * 0.4 * (nd / 35);
+        }
+        h *= notchAtten;
+
+        const barH = Math.max(1, h * (H - 16));
+
+        // Color: notch region is red-tinted, outside is blue
+        if (f >= loEdge * 0.85 && f <= hiEdge * 1.15) {
+          const atten = 1.0 - notchAtten;
+          const r = Math.round(116 + 139 * atten);
+          const gn = Math.round(185 - 114 * atten);
+          const b = Math.round(255 - 168 * atten);
+          g.fillStyle = `rgba(${r},${gn},${b},${0.5 + atten * 0.4})`;
+        } else {
+          g.fillStyle = `rgba(116,185,255,${0.35 + bars[i] * 0.5})`;
+        }
+        g.fillRect(x - barW / 2, H - 12 - barH, barW, barH);
+
+        // Glow cap on taller bars
+        if (barH > 10) {
+          g.fillStyle = "rgba(116,185,255,0.6)";
+          g.fillRect(x - barW / 2, H - 12 - barH, barW, 2);
+        }
+      }
+
+      // Notch center line
+      const xTf = ((Math.log2(tf) - logMin) / logRange) * W;
+      g.strokeStyle = "rgba(255,71,87,0.7)";
+      g.setLineDash([3, 3]);
+      g.beginPath(); g.moveTo(xTf, 0); g.lineTo(xTf, H - 12); g.stroke();
+      g.setLineDash([]);
+
+      // Notch edge lines
+      g.strokeStyle = "rgba(255,71,87,0.25)";
+      g.setLineDash([2, 4]);
+      g.beginPath(); g.moveTo(xLo, 0); g.lineTo(xLo, H - 12); g.stroke();
+      g.beginPath(); g.moveTo(xHi, 0); g.lineTo(xHi, H - 12); g.stroke();
+      g.setLineDash([]);
+
+      // Labels
+      g.fillStyle = "rgba(255,71,87,0.85)";
+      g.font = "10px 'Courier New',monospace";
+      g.fillText(hzFmt(tf), Math.min(xTf + 4, W - 70), 12);
+      g.fillStyle = "rgba(255,71,87,0.5)";
+      g.font = "9px 'Courier New',monospace";
+      g.fillText(hzFmt(Math.round(loEdge)), Math.max(xLo - 35, 2), 22);
+      g.fillText(hzFmt(Math.round(hiEdge)), Math.min(xHi + 3, W - 50), 22);
+
+      // Frequency axis
+      g.fillStyle = K.sub;
+      g.font = "8px 'Courier New',monospace";
+      [100, 500, 1000, 2000, 5000, 10000, 20000].forEach(f => {
+        const fx = ((Math.log2(f) - logMin) / logRange) * W;
+        g.fillText(f >= 1000 ? `${f / 1000}k` : f, fx, H - 2);
+      });
+
+      // "NOTCH" label in the gap
+      g.fillStyle = "rgba(255,71,87,0.3)";
+      g.font = "bold 11px system-ui";
+      const notchLabelW = g.measureText("NOTCH").width;
+      g.fillText("NOTCH", (xLo + xHi) / 2 - notchLabelW / 2, H / 2 + 3);
+    };
+    frame();
+  }, []);
+
+  // Start/stop streaming viz when system notch is toggled
+  useEffect(() => {
+    if (sysNotchEnabled) {
+      drawStreamingViz();
+    } else {
+      cancelAnimationFrame(streamAnimR.current);
+      // Clear canvas when disabled
+      const cv = streamCanRef.current;
+      if (cv) {
+        const g = cv.getContext("2d");
+        g.fillStyle = K.bg;
+        g.fillRect(0, 0, cv.width, cv.height);
+      }
+    }
+    return () => cancelAnimationFrame(streamAnimR.current);
+  }, [sysNotchEnabled, drawStreamingViz]);
 
   const drawCanvas = useCallback(() => {
     cancelAnimationFrame(animR.current);
@@ -1846,7 +2373,7 @@ function NoiseTherapy({tinnitusFreq:initF, hearingResults, noiseTypeOnly, userId
       g.fillStyle=K.bg; g.fillRect(0,0,W,H);
       const sr=ac.current?ac.current.sampleRate:44100;
       const tf=tfRef.current;
-      if (ntRef.current === "notched") {
+      if (ntRef.current === "notched" || ntRef.current === "music") {
         const tx=(Math.log2(tf/20)/Math.log2(sr/2/20))*W;
         g.fillStyle="rgba(255,71,87,0.07)"; g.fillRect(tx-20,0,40,H);
         g.strokeStyle="rgba(255,71,87,0.6)"; g.setLineDash([4,4]);
@@ -1871,6 +2398,22 @@ function NoiseTherapy({tinnitusFreq:initF, hearingResults, noiseTypeOnly, userId
     };
     frame();
   },[]);
+
+  // Pause/resume animation loops when app goes to background/foreground
+  // Prevents wasted CPU and potential WebView crashes on Android
+  useEffect(() => {
+    const handleVisibility = () => {
+      if (document.hidden) {
+        cancelAnimationFrame(streamAnimR.current);
+        cancelAnimationFrame(animR.current);
+      } else {
+        if (sysNotchEnabled) drawStreamingViz();
+        if (playing) drawCanvas();
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => document.removeEventListener("visibilitychange", handleVisibility);
+  }, [sysNotchEnabled, playing, drawStreamingViz, drawCanvas]);
 
   const stopAudio = () => {
     if(srcR.current&&gainR.current&&ac.current){
@@ -1899,6 +2442,13 @@ function NoiseTherapy({tinnitusFreq:initF, hearingResults, noiseTypeOnly, userId
   };
 
   const startPlaying = (tf) => {
+    // If music type selected but no file loaded, don't start
+    if (ntRef.current === "music" && !musicBuf) return;
+    // Double-notch warning: if streaming notch is active AND we're using a notched type,
+    // the system-wide DynamicsProcessing will double-apply the notch to our in-app audio
+    if (sysNotchEnabled && (ntRef.current === "notched" || ntRef.current === "music")) {
+      setSysNotchError("⚠ In-app notched audio + streaming notch active = double-notching. Consider disabling streaming notch while using in-app therapy, or switch to white/pink/brown noise.");
+    }
     setElapsed(0); setSleepEnded(false);
     buildGraph(ntRef.current,volRef.current,ndRef.current,tf||tfRef.current);
     timerR.current = setInterval(()=>setElapsed(e=>e+1),1000);
@@ -1916,10 +2466,23 @@ function NoiseTherapy({tinnitusFreq:initF, hearingResults, noiseTypeOnly, userId
 
   const restart = (tf) => {
     if(!playRef.current) return;
-    stopAudio(); clearInterval(timerR.current); cancelAnimationFrame(animR.current);
-    buildGraph(ntRef.current,volRef.current,ndRef.current,tf||tfRef.current);
-    timerR.current = setInterval(()=>setElapsed(e=>e+1),1000);
-    drawCanvas();
+    // Fade out existing audio before starting new graph to prevent click
+    if (srcR.current && gainR.current && ac.current) {
+      try {
+        gainR.current.gain.linearRampToValueAtTime(0, ac.current.currentTime + 0.05);
+        const oldSrc = srcR.current;
+        setTimeout(() => { try { oldSrc.stop(); } catch(_) {} }, 80);
+      } catch(_) {}
+      srcR.current = null;
+    }
+    clearInterval(timerR.current); cancelAnimationFrame(animR.current);
+    // Small delay to let fade complete
+    setTimeout(() => {
+      if (!playRef.current) return;
+      buildGraph(ntRef.current,volRef.current,ndRef.current,tf||tfRef.current);
+      timerR.current = setInterval(()=>setElapsed(e=>e+1),1000);
+      drawCanvas();
+    }, 90);
   };
 
   useEffect(()=>{
@@ -1927,7 +2490,7 @@ function NoiseTherapy({tinnitusFreq:initF, hearingResults, noiseTypeOnly, userId
       gainR.current.gain.setTargetAtTime(dBtoG(vol),ac.current.currentTime,0.05);
   },[vol]);
 
-  useEffect(()=>{ restart(); },[nType,nDepth]);
+  useEffect(()=>{ restart(); },[nType,nDepth,musicBuf]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const onFreqSliderChange = (e) => {
     const f = s2f(parseInt(e.target.value,10));
@@ -1962,7 +2525,7 @@ function NoiseTherapy({tinnitusFreq:initF, hearingResults, noiseTypeOnly, userId
 
   const em=Math.floor(elapsed/60), es=elapsed%60;
   const prog=Math.min((elapsed/(sessMins*60))*100,100);
-  const erbWidth = erbOct(dispF) * 1.5;
+  const erbWidth = 1.0;  // 1-octave notch width (Okamoto et al. 2010 PNAS)
 
   // Session statistics
   const totalMinutes = sessions.reduce((s, x) => s + Math.floor(x.duration / 60), 0);
@@ -1983,6 +2546,14 @@ function NoiseTherapy({tinnitusFreq:initF, hearingResults, noiseTypeOnly, userId
 
   return (
     <div style={{animation:"up 0.3s ease"}}>
+      {/* ── Evidence disclaimer banner (Critique recommendation #5) ── */}
+      {!noiseTypeOnly && (
+        <div style={{marginBottom:14,padding:"10px 14px",background:"rgba(255,165,2,0.05)",border:`1px solid ${K.amber}44`,borderRadius:8,display:"flex",gap:10,alignItems:"flex-start"}}>
+          <span style={{color:K.amber,fontSize:16,flexShrink:0,marginTop:1}}>⚠</span>
+          <Lbl t="TMNMT evidence is preliminary. The original Okamoto 2010 study had only 8 participants per group. A 2025 meta-analysis of 14 RCTs found modest benefit at 3 months (–8.6 THI points) and stronger effects at 6 months (–24.6 points), but not all studies show benefit vs. unnotched sound. This app is a simplified implementation — not a substitute for clinical care." s={{lineHeight:1.7,fontSize:12,color:K.amber}}/>
+        </div>
+      )}
+
       <div style={{textAlign:"center",marginBottom:20}}>
         <Big t="SOUND THERAPY"/>
         {noiseTypeOnly
@@ -2008,7 +2579,7 @@ function NoiseTherapy({tinnitusFreq:initF, hearingResults, noiseTypeOnly, userId
             <Lbl t="🔴 TINNITUS FREQUENCY (NOTCH CENTER)"/>
             <div style={{textAlign:"right"}}>
               <Big t={hzFmt(dispF)} sz={22} c={K.red}/>
-              <Lbl t={`ERB notch: ±${Math.round(erbHz(dispF)/2)} Hz (${erbWidth.toFixed(2)} oct)`} s={{fontSize:12,marginTop:2}}/>
+              <Lbl t={`1-octave notch: ${hzFmt(Math.round(dispF/Math.SQRT2))} – ${hzFmt(Math.round(dispF*Math.SQRT2))}`} s={{fontSize:12,marginTop:2}}/>
             </div>
           </div>
           <input type="range" min={0} max={SMAX} step={1}
@@ -2069,19 +2640,55 @@ function NoiseTherapy({tinnitusFreq:initF, hearingResults, noiseTypeOnly, userId
                 ✓ SLEEP TIMER — SESSION ENDED · Tap ▶ to start a new session
               </div>
             )}
+            {playing && prog >= 100 && (
+              <div style={{marginTop:10,padding:"8px 12px",background:"rgba(0,212,180,0.08)",border:`1px solid ${K.teal}`,borderRadius:6,textAlign:"center"}}>
+                <Lbl t="✓ SESSION TARGET REACHED" c={K.teal} s={{fontSize:13,fontWeight:700,marginBottom:2}}/>
+                <Lbl t="Great work! Keep going or stop to save your session." s={{fontSize:11,color:K.sub}}/>
+              </div>
+            )}
           </div>
         </div>
       }/>
 
       <Panel s={{marginBottom:14}} ch={<>
-        <Lbl t="NOISE TYPE" s={{marginBottom:10}}/>
+        <Lbl t="SOUND SOURCE" s={{marginBottom:10}}/>
         {slopeRec && (
           <div style={{padding:"7px 10px",background:"rgba(253,121,168,0.07)",border:"1px solid rgba(253,121,168,0.3)",borderRadius:7,marginBottom:10,fontFamily:"'Courier New',monospace",fontSize:12,lineHeight:1.7,color:"#fd79a8"}}>
             Your sloping audiogram → <strong>pink noise recommended</strong> (softer highs, easier on damaged hair cells)
           </div>
         )}
+        {/* Music file upload — the evidence-based carrier (Okamoto 2010, Pantev 2012) */}
+        {!noiseTypeOnly && (
+          <div style={{marginBottom:12,padding:"12px 14px",background:nType==="music"?"rgba(255,211,42,0.06)":"transparent",border:`1px solid ${nType==="music"?"#ffd32a44":K.border}`,borderRadius:8}}>
+            <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:8}}>
+              <span style={{fontSize:20}}>🎵</span>
+              <div style={{flex:1}}>
+                <Lbl t="NOTCHED MUSIC (STRONGEST EVIDENCE)" c={nType==="music"?"#ffd32a":K.muted} s={{fontSize:13,fontWeight:700}}/>
+                <Lbl t="Upload your own music — attention to music strengthens lateral inhibition (Okamoto 2010)" s={{fontSize:12,lineHeight:1.6}}/>
+              </div>
+            </div>
+            <input ref={musicInputRef} type="file" accept="audio/*" onChange={handleMusicFile}
+              style={{display:"none"}}/>
+            <div style={{display:"flex",gap:8,alignItems:"center"}}>
+              <button onClick={()=>musicInputRef.current?.click()}
+                style={{padding:"8px 16px",background:"rgba(255,211,42,0.08)",border:"1px solid #ffd32a",borderRadius:6,color:"#ffd32a",fontFamily:"system-ui",fontWeight:600,fontSize:13,cursor:"pointer",transition:"all 0.15s"}}>
+                {musicLoading ? "DECODING…" : musicName ? "CHANGE FILE" : "UPLOAD MUSIC FILE"}
+              </button>
+              {musicName && (
+                <Lbl t={`✓ ${musicName}`} c="#ffd32a" s={{fontSize:12,flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}/>
+              )}
+            </div>
+            {!musicBuf && nType==="music" && (
+              <Lbl t="↑ Upload a music file to use notched music therapy" c={K.amber} s={{marginTop:6,fontSize:12}}/>
+            )}
+          </div>
+        )}
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-          {NOISE_TYPES.filter(n=>noiseTypeOnly ? n.id!=="notched" : true).map(n=>(
+          {NOISE_TYPES.filter(n => {
+            if (noiseTypeOnly) return n.id!=="notched" && n.id!=="music";
+            if (n.id==="music") return false; // shown above as special upload section
+            return true;
+          }).map(n=>(
             <button key={n.id} onClick={()=>setNType(n.id)} style={{padding:"12px",textAlign:"left",background:nType===n.id?"rgba(255,255,255,0.03)":"transparent",border:`1px solid ${nType===n.id?n.color:K.border}`,borderRadius:8,transition:"all 0.15s"}}>
               <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:4}}>
                 <div style={{width:7,height:7,borderRadius:"50%",background:n.color,flexShrink:0}}/>
@@ -2094,20 +2701,165 @@ function NoiseTherapy({tinnitusFreq:initF, hearingResults, noiseTypeOnly, userId
         </div>
       </>}/>
 
+      {/* ── System-wide streaming notch (Pandora/Spotify/YouTube/etc.) ── */}
+      {!noiseTypeOnly && (
+        <Panel s={{marginBottom:14,borderColor:sysNotchEnabled?"#74b9ff66":K.dim}} ch={<>
+          <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:10}}>
+            <span style={{fontSize:22}}>📡</span>
+            <div style={{flex:1}}>
+              <Lbl t="STREAMING MODE — NOTCH YOUR MUSIC" c={sysNotchEnabled?"#74b9ff":K.text} s={{fontSize:14,fontWeight:700}}/>
+              <Lbl t="Apply the therapeutic notch to Pandora, Spotify, YouTube, or any audio playing on your phone" s={{fontSize:12,lineHeight:1.6}}/>
+            </div>
+          </div>
+
+          {sysNotchAvail ? (
+            <>
+              {/* ── Noise color / spectral tilt selector ── */}
+              <div style={{marginBottom:10}}>
+                <Lbl t="SPECTRAL TILT" s={{fontSize:11,marginBottom:5}}/>
+                <div style={{display:"flex",gap:6}}>
+                  {[
+                    {id:"white",label:"WHITE",desc:"Flat — no tilt",color:"#dfe6e9"},
+                    {id:"pink", label:"PINK", desc:"−3 dB/oct — gentler highs",color:"#fd79a8"},
+                    {id:"brown",label:"BROWN",desc:"−6 dB/oct — warm bass focus",color:"#e17055"},
+                  ].map(c=>(
+                    <button key={c.id} onClick={()=>setStreamNoiseColor(c.id)}
+                      style={{flex:1,padding:"8px 4px",
+                        background:streamNoiseColor===c.id?`${c.color}18`:"transparent",
+                        border:`1px solid ${streamNoiseColor===c.id?c.color:K.border}`,
+                        borderRadius:6,cursor:"pointer",textAlign:"center",transition:"all 0.2s"}}>
+                      <div style={{fontFamily:"system-ui",fontWeight:700,fontSize:12,
+                        color:streamNoiseColor===c.id?c.color:K.muted,letterSpacing:"0.05em"}}>{c.label}</div>
+                      <div style={{fontFamily:"'Courier New',monospace",fontSize:9,
+                        color:streamNoiseColor===c.id?c.color:K.sub,marginTop:2,opacity:0.8}}>{c.desc}</div>
+                    </button>
+                  ))}
+                </div>
+                {streamNoiseColor !== "white" && (
+                  <Lbl t={streamNoiseColor === "pink"
+                    ? "Pink tilt reduces high-frequency energy — recommended for high-frequency hearing loss"
+                    : "Brown tilt strongly emphasises bass — very warm, reduces treble stress"
+                  } s={{fontSize:11,lineHeight:1.6,marginTop:5,color:streamNoiseColor==="pink"?"#fd79a8":"#e17055"}}/>
+                )}
+              </div>
+
+              <div style={{display:"flex",gap:10,alignItems:"center",marginBottom:8}}>
+                <button onClick={toggleSysNotch}
+                  style={{flex:"none",padding:"10px 22px",
+                    background:sysNotchEnabled?"rgba(116,185,255,0.12)":"rgba(0,212,180,0.06)",
+                    border:`1px solid ${sysNotchEnabled?"#74b9ff":K.teal}`,
+                    borderRadius:8,color:sysNotchEnabled?"#74b9ff":K.teal,
+                    fontFamily:"system-ui",fontWeight:700,fontSize:14,cursor:"pointer",
+                    transition:"all 0.2s",
+                    animation:sysNotchEnabled?"glow 2.5s ease-in-out infinite":"none"}}>
+                  {sysNotchEnabled ? "■ STREAMING NOTCH ON" : "▶ ENABLE STREAMING NOTCH"}
+                </button>
+                {sysNotchEnabled && (
+                  <div style={{display:"flex",alignItems:"center",gap:6}}>
+                    <div style={{width:8,height:8,borderRadius:"50%",background:"#74b9ff",animation:"pulse 1.5s infinite"}}/>
+                    <Lbl t={`Filtering all audio at ${hzFmt(dispF)}`} c="#74b9ff" s={{fontSize:12}}/>
+                  </div>
+                )}
+              </div>
+              {sysNotchEnabled && (()=>{
+                const sem = Math.floor(streamElapsed/60), ses = streamElapsed%60;
+                const sprog = Math.min((streamElapsed/(streamSessMins*60))*100, 100);
+                return (<>
+                  <Panel s={{padding:0,overflow:"hidden",marginTop:10,marginBottom:4,borderColor:"#74b9ff33"}} ch={
+                    <canvas ref={streamCanRef} width={620} height={110} style={{width:"100%",height:110,display:"block"}}/>
+                  }/>
+
+                  {/* ── Streaming session timer ── */}
+                  <div style={{marginTop:8,padding:"10px 12px",background:"rgba(116,185,255,0.04)",border:"1px solid rgba(116,185,255,0.15)",borderRadius:8}}>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:6}}>
+                      <span style={{fontFamily:"system-ui",fontSize:24,fontWeight:700,color:"#74b9ff",animation:"pulse 3s ease-in-out infinite"}}>
+                        {String(sem).padStart(2,"0")}:{String(ses).padStart(2,"0")}
+                      </span>
+                      <Lbl t={`/ ${streamSessMins} min · ${Math.round(sprog)}%`} c="#74b9ff" s={{fontSize:12}}/>
+                    </div>
+                    <div style={{background:K.dim,borderRadius:3,height:4,marginBottom:8}}>
+                      <div style={{background:"linear-gradient(90deg,#74b9ff,#0984e3)",width:`${sprog}%`,height:"100%",borderRadius:3,transition:"width 1s linear"}}/>
+                    </div>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
+                      <Lbl t="STREAMING SESSION TARGET" s={{fontSize:11}}/>
+                      <Lbl t={`${streamSessMins} min`} c="#74b9ff" s={{fontSize:12}}/>
+                    </div>
+                    <SldC val={streamSessMins} min={15} max={120} step={5} cls="sl-blue" color="#74b9ff" onCh={setStreamSessMins}/>
+
+                    {/* Streaming sleep timer */}
+                    <div style={{marginTop:10,paddingTop:8,borderTop:`1px solid ${K.dim}`}}>
+                      <div style={{display:"flex",justifyContent:"space-between",marginBottom:6}}>
+                        <Lbl t="SLEEP TIMER (auto-stop)" s={{fontSize:11}}/>
+                        <Lbl t={streamSleepMins===0?"OFF":`${streamSleepMins} min`} c={streamSleepMins>0?"#74b9ff":K.muted} s={{fontSize:11}}/>
+                      </div>
+                      <div style={{display:"flex",gap:5}}>
+                        {[{l:"OFF",v:0},{l:"30m",v:30},{l:"60m",v:60},{l:"90m",v:90},{l:"120m",v:120}].map(({l,v})=>(
+                          <button key={v} onClick={()=>setStreamSleepMins(v)} style={{flex:1,padding:"5px 2px",background:streamSleepMins===v?"rgba(116,185,255,0.1)":"transparent",border:`1px solid ${streamSleepMins===v?"#74b9ff":K.border}`,borderRadius:4,color:streamSleepMins===v?"#74b9ff":K.muted,fontSize:11,fontFamily:"'Courier New',monospace",transition:"all 0.15s"}}>
+                            {l}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <Lbl t="Sessions > 30 s are tracked automatically. Stop the notch to save." s={{fontSize:11,color:K.sub,marginTop:6}}/>
+                  </div>
+
+                  {/* Session target reached notification */}
+                  {streamTargetHit && (
+                    <div style={{marginTop:8,padding:"8px 12px",background:"rgba(0,212,180,0.08)",border:`1px solid ${K.teal}`,borderRadius:6,textAlign:"center"}}>
+                      <Lbl t="✓ SESSION TARGET REACHED" c={K.teal} s={{fontSize:13,fontWeight:700,marginBottom:2}}/>
+                      <Lbl t="Great work! You can continue or stop the session to save." s={{fontSize:11,color:K.sub}}/>
+                    </div>
+                  )}
+
+                  <Lbl t={`1-octave notch: ${hzFmt(Math.round(dispF/Math.SQRT2))} – ${hzFmt(Math.round(dispF*Math.SQRT2))} · –${nDepth} dB · ${streamNoiseColor === "pink" ? "pink (−3 dB/oct)" : streamNoiseColor === "brown" ? "brown (−6 dB/oct)" : "flat"} tilt`} s={{fontSize:12,lineHeight:1.7,color:K.sub,marginTop:6}}/>
+                </>);
+              })()}
+              {!sysNotchEnabled && !streamSleepEnded && (
+                <Lbl t="HOW IT WORKS: Attaches a system-wide audio effect to your device's output. All audio from any app passes through the therapeutic notch filter. No recording, no DRM issues — it's an inline effect like a system equalizer. Works with any music streaming app." s={{fontSize:12,lineHeight:1.7}}/>
+              )}
+              {streamSleepEnded && !sysNotchEnabled && (
+                <div style={{marginTop:8,padding:"8px 12px",background:"rgba(116,185,255,0.07)",border:"1px solid rgba(116,185,255,0.3)",borderRadius:6,textAlign:"center",fontFamily:"'Courier New',monospace",fontSize:13,color:"#74b9ff"}}>
+                  ✓ SLEEP TIMER — STREAMING SESSION ENDED · Tap ▶ to start a new session
+                </div>
+              )}
+              {sysNotchError && (
+                <div style={{marginTop:8,padding:"6px 10px",background:"rgba(255,71,87,0.08)",border:"1px solid rgba(255,71,87,0.3)",borderRadius:6}}>
+                  <Lbl t={`⚠ ${sysNotchError}`} c={K.red} s={{fontSize:12}}/>
+                  <Lbl t="Some devices restrict system-wide audio effects. Use the in-app music upload as an alternative." s={{fontSize:11,color:K.sub,marginTop:4}}/>
+                </div>
+              )}
+            </>
+          ) : (
+            <div style={{padding:"8px 12px",background:K.dim,borderRadius:6}}>
+              <Lbl t="System-wide audio effects require Android 9+ running natively. Use the music file upload above to apply the notch to your own music files instead." s={{fontSize:12,lineHeight:1.7}}/>
+            </div>
+          )}
+        </>}/>
+      )}
+
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:14}}>
         <Panel ch={<>
           <Lbl t="VOLUME" s={{marginBottom:6}}/>
           <Big t={`${vol} dB`} sz={26} c="#a29bfe" s={{marginBottom:10}}/>
           <SldC val={vol} min={5} max={80} step={1} cls="sl-purple" color="#a29bfe" onCh={setVol}/>
+          {vol > 72 && (
+            <div style={{marginTop:6,padding:"6px 8px",background:"rgba(255,71,87,0.08)",border:"1px solid rgba(255,71,87,0.3)",borderRadius:5}}>
+              <Lbl t="⚠ HIGH VOLUME — risk of over-masking. You should still hear your tinnitus faintly. Over-masking prevents habituation, the core therapeutic mechanism." s={{fontSize:11,lineHeight:1.6,color:K.red}}/>
+            </div>
+          )}
           <Lbl t="▸ Set BELOW tinnitus loudness — do not mask it. Masking prevents habituation. You should still be able to hear your tinnitus faintly beneath the noise." s={{marginTop:8,lineHeight:1.8,fontSize:13,color:K.amber}}/>
         </>}/>
         {!noiseTypeOnly && (
           <Panel ch={<>
             <Lbl t="NOTCH DEPTH" s={{marginBottom:6}}/>
             <Big t={<>–{nDepth} <span style={{fontSize:14}}>dB</span></>} sz={26} c="#4ade80" s={{marginBottom:10}}/>
-            <SldC val={nDepth} min={10} max={60} step={5} cls="sl-teal" color="#4ade80" onCh={setNDepth}/>
-            <Lbl t="Width auto-calculated from ERB at your frequency — no guesswork needed." s={{marginTop:8,lineHeight:1.8,fontSize:13}}/>
-            <Lbl t={`Notch: ${hzFmt(Math.round(dispF/Math.pow(2,erbWidth*0.5)))} – ${hzFmt(Math.round(dispF*Math.pow(2,erbWidth*0.5)))}`} c={K.teal} s={{fontSize:12,marginTop:4}}/>
+            <SldC val={nDepth} min={10} max={40} step={5} cls="sl-teal" color="#4ade80" onCh={setNDepth}/>
+            <Lbl t="1-octave width per Okamoto et al. (2010 PNAS). Published studies used 12–20 dB depth." s={{marginTop:8,lineHeight:1.8,fontSize:13}}/>
+            {nDepth > 30 && (
+              <Lbl t="⚠ Deep notch (>30 dB) can cause audible ringing artifacts. Published TMNMT studies used 12–20 dB." s={{marginTop:4,fontSize:12,lineHeight:1.6,color:K.amber}}/>
+            )}
+            <Lbl t={`Notch: ${hzFmt(Math.round(dispF/Math.SQRT2))} – ${hzFmt(Math.round(dispF*Math.SQRT2))}`} c={K.teal} s={{fontSize:12,marginTop:4}}/>
           </>}/>
         )}
       </div>
@@ -2154,26 +2906,71 @@ function NoiseTherapy({tinnitusFreq:initF, hearingResults, noiseTypeOnly, userId
         )}
       </>}/>
 
-      {sessions.length > 0 && (
-        <Panel s={{marginBottom:14,borderColor:K.dim}} ch={<>
-          <Lbl t="📊 SESSION HISTORY" s={{marginBottom:10}}/>
-          <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10,textAlign:"center"}}>
-            <div style={{background:K.dim,borderRadius:8,padding:"10px 4px"}}>
-              <Big t={sessions.length} sz={22} c={K.teal}/>
-              <Lbl t="sessions" s={{fontSize:12,marginTop:2}}/>
+      {/* ── Cumulative Session Tracking with daily/weekly progress ── */}
+      {(()=>{
+        const today = new Date().toISOString().slice(0,10);
+        const todaySessions = sessions.filter(s=>s.date.slice(0,10)===today);
+        const todayMins = Math.round(todaySessions.reduce((a,s)=>a+(s.duration||0),0)/60);
+        const dailyGoal = 60; // 60 min/day evidence-based minimum
+        const todayPct = Math.min((todayMins/dailyGoal)*100,100);
+
+        // Last 7 days
+        const weekDays = Array.from({length:7},(_,i)=>{
+          const d = new Date(Date.now()-i*86400000).toISOString().slice(0,10);
+          const daySess = sessions.filter(s=>s.date.slice(0,10)===d);
+          const mins = Math.round(daySess.reduce((a,s)=>a+(s.duration||0),0)/60);
+          return {date:d, mins, dayLabel:new Date(d).toLocaleDateString(undefined,{weekday:"short"})};
+        }).reverse();
+        const weekMins = weekDays.reduce((a,d)=>a+d.mins,0);
+        const weekTarget = dailyGoal*7;
+        const maxDay = Math.max(...weekDays.map(d=>d.mins), dailyGoal);
+
+        return (
+          <Panel s={{marginBottom:14,borderColor:todayPct>=100?K.teal+"66":K.dim}} ch={<>
+            <Lbl t="📊 DAILY PROGRESS & SESSION TRACKING" s={{marginBottom:12}}/>
+
+            {/* Today's progress */}
+            <div style={{display:"flex",alignItems:"center",gap:14,marginBottom:14}}>
+              <div style={{flex:1}}>
+                <div style={{display:"flex",justifyContent:"space-between",marginBottom:6}}>
+                  <Lbl t="TODAY" c={K.text} s={{fontSize:13}}/>
+                  <Lbl t={`${todayMins} / ${dailyGoal} min`} c={todayPct>=100?K.teal:K.amber} s={{fontSize:13}}/>
+                </div>
+                <div style={{background:K.dim,borderRadius:3,height:8,overflow:"hidden"}}>
+                  <div style={{background:todayPct>=100?`linear-gradient(90deg,${K.teal},#00a896)`:`linear-gradient(90deg,${K.amber},#ffa502)`,width:`${todayPct}%`,height:"100%",borderRadius:3,transition:"width 0.5s"}}/>
+                </div>
+                <Lbl t={todayPct>=100?"✓ Daily target reached!":"Evidence-based target: 60–120 min/day"} c={todayPct>=100?K.teal:K.sub} s={{fontSize:11,marginTop:4}}/>
+              </div>
             </div>
-            <div style={{background:K.dim,borderRadius:8,padding:"10px 4px"}}>
-              <Big t={`${totalHours}h`} sz={22} c={K.amber}/>
-              <Lbl t="total time" s={{fontSize:12,marginTop:2}}/>
+
+            {/* 7-day bar chart */}
+            <Lbl t="LAST 7 DAYS" s={{marginBottom:8,fontSize:12}}/>
+            <div style={{display:"flex",gap:4,alignItems:"flex-end",height:60,marginBottom:4}}>
+              {weekDays.map((d,i)=>{
+                const h = maxDay>0 ? Math.max(3, (d.mins/maxDay)*54) : 3;
+                const metGoal = d.mins >= dailyGoal;
+                const isToday = d.date === today;
+                return (
+                  <div key={i} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:2}} title={`${d.date}: ${d.mins} min`}>
+                    <Lbl t={d.mins>0?`${d.mins}`:""} s={{fontSize:8,color:metGoal?K.teal:K.muted}}/>
+                    <div style={{width:"100%",height:h,background:metGoal?K.teal:d.mins>0?K.amber+"88":K.dim,borderRadius:2,border:isToday?`1px solid ${K.text}`:"none",transition:"height 0.3s"}}/>
+                  </div>
+                );
+              })}
             </div>
-            <div style={{background:K.dim,borderRadius:8,padding:"10px 4px"}}>
-              <Big t={streak} sz={22} c="#a29bfe"/>
-              <Lbl t={`day streak`} s={{fontSize:12,marginTop:2}}/>
+            <div style={{display:"flex",gap:4,marginBottom:10}}>
+              {weekDays.map((d,i)=>(
+                <Lbl key={i} t={d.dayLabel} s={{flex:1,textAlign:"center",fontSize:8,color:d.date===today?K.text:K.sub}}/>
+              ))}
             </div>
-          </div>
-          <Lbl t="Sessions > 30 s are saved automatically. Aim for 60–120 min daily for best results." s={{marginTop:10,lineHeight:1.8,fontSize:13}}/>
-        </>}/>
-      )}
+            <div style={{display:"flex",justifyContent:"space-between",padding:"6px 0",borderTop:`1px solid ${K.dim}`}}>
+              <Lbl t={`Week: ${weekMins} / ${weekTarget} min`} s={{fontSize:12}}/>
+              <Lbl t={`${sessions.length} total sessions · ${totalHours}h all-time · ${streak}d streak`} s={{fontSize:12}}/>
+            </div>
+            <Lbl t="Sessions > 30 s are saved automatically." s={{marginTop:6,lineHeight:1.8,fontSize:12}}/>
+          </>}/>
+        );
+      })()}
 
       <Panel s={{borderColor:"#1a1a3e",cursor:"pointer"}} ch={<>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}} onClick={()=>setShowBimodal(b=>!b)}>
@@ -2345,7 +3142,7 @@ export default function App() {
 
           {phase==="disclaimer" && <Disclaimer onAccept={()=>{ if(uid)uSet(uid,"disclaimer","1"); setPhase("intro"); }}/>}
 
-          {phase==="calibration"&& <Calibration onConfirm={()=>{ if(uid)uSet(uid,"cal_date",new Date().toISOString().slice(0,10)); setPhase("tintype"); }} onSkip={()=>setPhase("tintype")}/>}
+          {phase==="calibration"&& <Calibration onConfirm={()=>{ if(uid)uSet(uid,"cal_date",new Date().toISOString().slice(0,10)); setPhase("tintype"); }} onSkip={()=>{ if(uid)uSet(uid,"cal_skipped","1"); setPhase("tintype"); }}/>}
 
           {phase==="intro"      && <Intro
               savedData={hRes ? {freq: tFreq} : null}
@@ -2359,14 +3156,25 @@ export default function App() {
               onUnsure={()=>setPhase("test")}/>}
 
           {phase==="test"       && <HearingTest
-              onComplete={(r, mode)=>{
+              calibrated={uid ? uGet(uid,"cal_date") && !uGet(uid,"cal_skipped") : false}
+              onComplete={(r, mode, wasCal, falsePosCount, catchCount)=>{
                 setHRes(r);
                 if (uid) {
                   uSet(uid,"audiogram_latest",JSON.stringify(r));
                   const hist = uGetJ(uid,"audiograms",[]);
-                  hist.push({date:new Date().toISOString(), results:r, mode:mode||"standard"});
+                  const entry = {
+                    date: new Date().toISOString(),
+                    results: r,
+                    mode: mode || "standard",
+                    calibrated: !!wasCal,
+                    falsePositives: falsePosCount || 0,
+                    catchTrials: catchCount || 0,
+                  };
+                  hist.push(entry);
                   if (hist.length>50) hist.splice(0,hist.length-50);
                   uSetJ(uid,"audiograms",hist);
+                  // Clear skipped-cal flag for next session
+                  try { localStorage.removeItem(`ts_${uid}_cal_skipped`); } catch(_) {}
                 }
                 setPhase("testresults");
               }}
@@ -2378,6 +3186,7 @@ export default function App() {
 
           {phase==="tone"       && <ToneFinder
               hearingResults={hRes}
+              userId={uid}
               onComplete={(f, vol, ear) => {
                 setTFreq(f); setTVol(vol||55); setTEar(ear||"both");
                 if (uid) {
