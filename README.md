@@ -171,7 +171,7 @@ Key implementation details from the research:
 - **12–20 dB notch depth** — deeper notches had no additional benefit
 - **1–2 hours daily** — the clinical protocol duration
 
-See [CRITIQUE.md](CRITIQUE.md) for a detailed analysis of how this implementation compares to the published research.
+See [TINNITUS_RESEARCH.md](TINNITUS_RESEARCH.md) for the research notes that informed the current implementation.
 
 ---
 
