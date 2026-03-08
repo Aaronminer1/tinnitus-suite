@@ -140,6 +140,87 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 
 ---
 
+## Deploy to Android with VS Code + AI (easiest method)
+
+This is how I personally deploy to my phones — no Android Studio needed. You just clone the repo, plug in your phone, and ask the AI to deploy it.
+
+### What you need
+
+1. **VS Code** — [Download here](https://code.visualstudio.com/)
+2. **GitHub Copilot** — Install the GitHub Copilot extension in VS Code (requires a GitHub Copilot subscription). I use **Claude Opus 4.6** as the model — you can select it in Copilot's model picker
+3. **Node.js v18+** — [Download here](https://nodejs.org/)
+4. **Java 17+** — `sudo apt install openjdk-17-jdk` (Linux) or download from [Adoptium](https://adoptium.net/)
+5. **Android SDK** — Install via Android Studio's SDK Manager, or use `sdkmanager` from command-line tools. You need API 28+ (API 36 for full feature set)
+6. **ADB** — Comes with Android SDK platform-tools. Make sure it's in your PATH
+7. **A USB-C cable** (or USB-A to USB-C) to connect your phone
+
+### One-time phone setup
+
+1. **Enable Developer Options:**
+   - Go to **Settings → About phone → Software information**
+   - Tap **Build number** 7 times — you'll see "Developer mode has been enabled"
+2. **Enable USB Debugging:**
+   - Go to **Settings → Developer options**
+   - Turn on **USB debugging**
+3. **Connect your phone** via USB cable
+4. **Authorize the connection** — a popup will appear on your phone asking "Allow USB debugging?" — tap **Allow** (check "Always allow from this computer" for convenience)
+5. **Verify the connection** — open a terminal and run `adb devices`. You should see your device listed
+
+### Deploy walkthrough
+
+1. **Clone the repo and install dependencies:**
+   ```bash
+   git clone https://github.com/Aaronminer1/tinnitus-suite.git
+   cd tinnitus-suite
+   npm install
+   ```
+
+2. **Open the folder in VS Code:**
+   ```bash
+   code .
+   ```
+
+3. **Open GitHub Copilot Chat** (click the Copilot icon in the sidebar or press `Ctrl+Shift+I`)
+
+4. **Select Claude Opus 4.6** as your model in the Copilot model picker (dropdown at the top of the chat panel)
+
+5. **Plug in your Android phone** via USB and accept the debugging prompt if it appears
+
+6. **Type this in Copilot Chat:**
+   > Deploy to my connected Android phone
+
+   That's it. Copilot will:
+   - Build the web assets (`npx vite build`)
+   - Sync them to the Android project (`npx cap sync android`)
+   - Build the APK (`./gradlew assembleDebug`)
+   - Install it on your phone (`adb install`)
+
+7. **Open the app** on your phone — it'll appear as "Tinnitus Suite" in your app drawer
+
+### Updating to a new version
+
+When there's a new version:
+
+```bash
+cd tinnitus-suite
+git pull
+npm install
+```
+
+Then just tell Copilot: **"Deploy to my connected phone"** — it handles the rest.
+
+### Troubleshooting
+
+| Problem | Fix |
+|---|---|
+| `adb devices` shows nothing | Check USB cable, re-enable USB debugging, try a different USB port |
+| "unauthorized" next to device | Unlock your phone and tap "Allow" on the USB debugging prompt |
+| Build fails on Java | Make sure Java 17+ is installed: `java -version` |
+| `sdkmanager` not found | Install Android SDK command-line tools or set `ANDROID_HOME` |
+| Gradle fails to download | Check internet connection; Gradle downloads dependencies on first build |
+
+---
+
 ## Build for production (web)
 
 ```bash
