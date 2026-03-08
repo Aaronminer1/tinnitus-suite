@@ -26,20 +26,10 @@ const SystemNotch = (() => {
 // Top limit is 16 kHz — 18 kHz and 20 kHz are beyond reliable consumer earbud range.
 // At 18-20 kHz the Hughson-Westlake protocol climbs to 90+ dBHL where any gain formula
 // that isn't perfectly clamped generates clipping harmonics heard as spurious low-pitch buzz.
-// Standard clinical audiometry: 250 Hz – 8 kHz. Extended high-frequency: up to 16 kHz.
-const FREQ_QUICK    = [500,1000,2000,4000,6000,8000,10000,12000,16000];
-const FREQ_STANDARD = [250,500,1000,2000,3000,4000,6000,8000,10000,12000,14000,16000];
-const FREQ_FINE     = [250,500,750,1000,1500,2000,3000,4000,5000,6000,7000,8000,
-                        10000,12000,14000,16000];
-const TEST_MODES = [
-  {id:"quick",    label:"QUICK",    freqs:FREQ_QUICK,    est:"~7 min",
-   desc:"9 frequencies · 500 Hz – 16 kHz · Recommended first-time screening"},
-  {id:"standard", label:"STANDARD", freqs:FREQ_STANDARD, est:"~11 min",
-   desc:"12 frequencies · 250 Hz – 16 kHz · Full extended clinical audiogram"},
-  {id:"fine",     label:"FINE",     freqs:FREQ_FINE,     est:"~17 min",
-   desc:"16 frequencies · 250 Hz – 16 kHz · Maximum resolution — every 500 Hz – 1 kHz step"},
-];
-const TEST_FREQS = FREQ_STANDARD; // consumed by legacy fallbacks only
+// Clinical standard audiometric frequencies (ISO 8253-1) + extended high-frequency.
+// 500–8000 Hz covers NIHL notch detection, slope analysis, and audiogram EQ.
+// 10k–16k extended range catches early high-frequency loss common in tinnitus patients.
+const TEST_FREQS = [500, 1000, 2000, 3000, 4000, 6000, 8000, 10000, 12000, 14000, 16000];
 const EARS = ["left","right"];
 
 const CATS = [
@@ -168,6 +158,7 @@ const CSS = `
   @keyframes up{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
   @keyframes pulse{0%,100%{opacity:0.45}50%{opacity:1}}
   @keyframes bar{0%,100%{transform:scaleY(0.25)}50%{transform:scaleY(1)}}
+  @keyframes ping{0%{transform:scale(1);opacity:0.6}100%{transform:scale(1.8);opacity:0}}
   input[type=range]{-webkit-appearance:none;appearance:none;height:6px;border-radius:3px;cursor:pointer;}
   input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:20px;height:20px;border-radius:50%;cursor:pointer;}
   .sl-teal::-webkit-slider-thumb{background:${K.teal};box-shadow:0 0 10px rgba(0,212,180,0.7);}
@@ -765,273 +756,317 @@ function Calibration({onConfirm, onSkip}) {
 }
 
 // ─── Hearing Test ─────────────────────────────────────────────────────────────
+// Modified Hughson-Westlake (descend 10 / ascend 5). Single ascending response =
+// threshold. 7 clinical frequencies, both ears. ~3-4 minutes total.
 function HearingTest({onComplete, onSkip, calibrated}) {
-  const [testMode, setTestMode] = useState(null);
-  const [earIdx,  setEarIdx]  = useState(0);
-  const [freqIdx, setFreqIdx] = useState(0);
-  const [results, setResults] = useState({});
-  const [step,    setStep]    = useState("ready"); // ready | slider | confirm | confirmWait
-  const [earDone, setEarDone] = useState(false);
-  const [sliderDb, setSliderDb] = useState(60);      // current slider level (method of adjustment)
-  const [confirmDb, setConfirmDb] = useState(null);   // the 5dB-below level being confirmed
-  const [confirmAns, setConfirmAns] = useState(null); // true/false after confirm tone
+  const FREQS = TEST_FREQS;
+  const TONE_DUR = 3000;     // ms — tone presentation (long enough to hear)
+  const PAUSE    = 900;      // ms — silence between presentations
+  const MAX_TRIAL = 15;      // safety cap per frequency
+  const START_DB = 40;       // initial presentation level
 
-  const freqs  = testMode ? TEST_MODES.find(m=>m.id===testMode).freqs : FREQ_STANDARD;
-  const fLabel = (f) => f >= 1000 ? `${(f/1000).toFixed(f%1000===0?0:1)}k` : `${f}`;
+  // ── Session state (ref for timeout-safe access) ──
+  const ss = useRef({
+    earIdx:0, freqIdx:0, results:{},
+    level:START_DB, phase:"find", lastHeard:null, trial:0,
+    responded:false, active:true
+  });
 
+  // ── UI state ──
+  const [, bump] = useState(0);
+  const redraw = () => bump(n=>n+1);
+  const [screen, setScreen]       = useState("intro"); // intro | testing | earSwitch
+  const [playing, setPlaying]     = useState(false);
+  const [canResp, setCanResp]     = useState(false);
+  const [feedback, setFeedback]   = useState(null); // "heard"|"missed"|"done"|null
+  const [waiting, setWaiting]     = useState(false); // brief pause before next tone
+
+  // Audio refs
   const ac  = useRef(null);
   const osc = useRef(null);
   const gn  = useRef(null);
-  const tmr = useRef(null);
+  const t1  = useRef(null);
+  const t2  = useRef(null);
+  const t3  = useRef(null);
 
   const audio = () => {
     if (!ac.current) ac.current = mkCtx();
-    if (ac.current.state === "suspended") ac.current.resume();
+    if (ac.current.state==="suspended") ac.current.resume();
     return ac.current;
   };
 
   const stopTone = () => {
     if (gn.current && ac.current) {
-      try { gn.current.gain.linearRampToValueAtTime(0, ac.current.currentTime+0.06); } catch(_){}
+      try { gn.current.gain.linearRampToValueAtTime(0, ac.current.currentTime+0.04); } catch(_){}
     }
     const o = osc.current;
-    setTimeout(() => { try{ o && o.stop(); }catch(_){} osc.current = null; }, 90);
+    setTimeout(()=>{ try{o&&o.stop();}catch(_){} osc.current=null; },60);
   };
 
-  // Start or update a continuous tone at the given dB (used by slider)
-  const startTone = (freq, db, ear) => {
-    const ctx = audio();
-    if (osc.current) {
-      // Tone already playing — just update gain smoothly
-      if (gn.current) {
-        try { gn.current.gain.linearRampToValueAtTime(dBtoG(db), ctx.currentTime + 0.05); } catch(_){}
-      }
-      return;
-    }
-    const o = ctx.createOscillator();
-    const g = ctx.createGain();
-    g.gain.setValueAtTime(0, ctx.currentTime);
-    g.gain.linearRampToValueAtTime(dBtoG(db), ctx.currentTime + 0.08);
-    o.type = "sine"; o.frequency.value = freq;
-    o.connect(g);
-    if (ear !== "both" && ctx.destination.channelCount >= 2) {
-      const mg = ctx.createChannelMerger(2);
-      g.connect(mg, 0, ear === "left" ? 0 : 1);
-      const silBuf = ctx.createBuffer(1, 128, ctx.sampleRate);
-      const silSrc = ctx.createBufferSource();
-      silSrc.buffer = silBuf; silSrc.loop = true;
-      silSrc.connect(mg, 0, ear === "left" ? 1 : 0);
-      silSrc.start();
-      mg.connect(ctx.destination);
-    } else { g.connect(ctx.destination); }
-    o.start(); osc.current = o; gn.current = g;
-  };
-
-  // Play a single short tone for the confirm step
-  const playConfirmTone = (freq, db, ear) => {
+  const playTone = (freq, db, ear) => {
     stopTone();
-    setTimeout(() => {
+    setTimeout(()=>{
       const ctx = audio();
       const o = ctx.createOscillator();
       const g = ctx.createGain();
       g.gain.setValueAtTime(0, ctx.currentTime);
-      g.gain.linearRampToValueAtTime(dBtoG(db), ctx.currentTime + 0.08);
-      o.type = "sine"; o.frequency.value = freq;
-      o.connect(g);
-      if (ear !== "both" && ctx.destination.channelCount >= 2) {
-        const mg = ctx.createChannelMerger(2);
-        g.connect(mg, 0, ear === "left" ? 0 : 1);
-        const silBuf = ctx.createBuffer(1, 128, ctx.sampleRate);
-        const silSrc = ctx.createBufferSource();
-        silSrc.buffer = silBuf; silSrc.loop = true;
-        silSrc.connect(mg, 0, ear === "left" ? 1 : 0);
-        silSrc.start();
+      g.gain.linearRampToValueAtTime(dBtoG(db), ctx.currentTime+0.02);
+      o.type="sine"; o.frequency.value=freq; o.connect(g);
+      if (ear!=="both" && ctx.destination.channelCount>=2) {
+        const mg=ctx.createChannelMerger(2);
+        g.connect(mg,0,ear==="left"?0:1);
+        const sb=ctx.createBuffer(1,128,ctx.sampleRate);
+        const ss2=ctx.createBufferSource(); ss2.buffer=sb; ss2.loop=true;
+        ss2.connect(mg,0,ear==="left"?1:0); ss2.start();
         mg.connect(ctx.destination);
       } else { g.connect(ctx.destination); }
-      o.start(); osc.current = o; gn.current = g;
-      // Auto-stop after 1.5s, then show confirm buttons
-      tmr.current = setTimeout(() => { stopTone(); setStep("confirmWait"); }, 1500);
-    }, 150);
+      o.start(); osc.current=o; gn.current=g;
+    }, 30);
   };
 
-  const advance = (res) => {
-    try { sessionStorage.setItem("ht_partial", JSON.stringify(res)); } catch(_) {}
-    if (freqIdx < freqs.length-1) {
-      setFreqIdx(freqIdx+1); setSliderDb(60); setStep("ready"); setConfirmDb(null); setConfirmAns(null);
-    } else if (earIdx === 0) {
-      setEarDone(true);
+  const clearTimers = () => {
+    clearTimeout(t1.current); clearTimeout(t2.current); clearTimeout(t3.current);
+  };
+
+  const resetBracketing = () => {
+    const s = ss.current;
+    s.level=START_DB; s.phase="find"; s.lastHeard=null; s.trial=0; s.responded=false;
+  };
+
+  // ── Record threshold & advance ──
+  const recordThreshold = (threshold) => {
+    const s = ss.current;
+    const key = `${EARS[s.earIdx]}_${FREQS[s.freqIdx]}`;
+    s.results[key] = threshold;
+    try { sessionStorage.setItem("ht_partial", JSON.stringify(s.results)); } catch(_){}
+    setFeedback("done"); redraw();
+
+    t3.current = setTimeout(()=>{
+      if (!s.active) return;
+      if (s.freqIdx < FREQS.length-1) {
+        s.freqIdx++;
+        resetBracketing(); redraw();
+        setFeedback(null); setWaiting(true);
+        t3.current = setTimeout(()=>{ setWaiting(false); presentTrial(); }, 600);
+      } else if (s.earIdx===0) {
+        setScreen("earSwitch");
+      } else {
+        try { sessionStorage.removeItem("ht_partial"); } catch(_){}
+        onComplete(s.results, "standard", !!calibrated, 0, 0);
+      }
+    }, 800);
+  };
+
+  // ── Present one trial ──
+  const presentTrial = () => {
+    const s = ss.current;
+    if (!s.active) return;
+    s.responded = false;
+    setPlaying(true); setCanResp(true); setFeedback(null); setWaiting(false); redraw();
+
+    playTone(FREQS[s.freqIdx], s.level, EARS[s.earIdx]);
+
+    // Stop tone after TONE_DUR but keep buttons active — wait for user
+    t1.current = setTimeout(()=>{
+      stopTone(); setPlaying(false);
+    }, TONE_DUR);
+  };
+
+  // ── User tapped "I HEAR IT" ──
+  const handleResponse = () => {
+    const s = ss.current;
+    if (s.responded) return;
+    s.responded = true;
+    clearTimers(); stopTone();
+    setPlaying(false); setCanResp(false);
+    processResponse(true);
+  };
+
+  // ── User tapped "I DON'T HEAR IT" ──
+  const handleNoResponse = () => {
+    const s = ss.current;
+    if (s.responded) return;
+    s.responded = true;
+    clearTimers(); stopTone();
+    setPlaying(false); setCanResp(false);
+    processResponse(false);
+  };
+
+  // ── Bracketing logic (Modified Hughson-Westlake) ──
+  const processResponse = (heard) => {
+    const s = ss.current;
+    s.trial++;
+    if (heard) s.lastHeard = s.level;
+
+    let done = false, threshold = null;
+
+    if (s.phase==="find") {
+      // Find an audible level first
+      if (heard) { s.phase="descend"; s.level-=10; }
+      else { s.level+=20; if(s.level>80){done=true; threshold=80;} }
+    } else if (s.phase==="descend") {
+      // Descend by 10 until miss
+      if (heard) { s.level-=10; if(s.level<0){done=true; threshold=0;} }
+      else { s.phase="ascend"; s.level+=5; }
     } else {
-      try { sessionStorage.removeItem("ht_partial"); } catch(_) {}
-      onComplete(res, testMode, !!calibrated, 0, 0);
+      // Ascend by 5 — first heard = threshold
+      if (heard) { done=true; threshold=s.level; }
+      else { s.level+=5; if(s.level>80){done=true; threshold=s.lastHeard??80;} }
+    }
+
+    if (!done && s.trial>=MAX_TRIAL) { done=true; threshold=s.lastHeard??s.level; }
+
+    setFeedback(heard?"heard":"missed"); redraw();
+
+    if (done) {
+      t3.current = setTimeout(()=>recordThreshold(threshold), 600);
+    } else {
+      setWaiting(true);
+      t3.current = setTimeout(()=>presentTrial(), PAUSE);
     }
   };
 
-  // User set their slider level — now do 5dB confirmation
-  const handleSliderSet = () => {
-    stopTone();
-    const cDb = Math.max(0, sliderDb - 5);
-    setConfirmDb(cDb);
-    setConfirmAns(null);
-    setStep("confirm");
-    // Play the confirm tone at 5dB below after a brief pause
-    setTimeout(() => {
-      playConfirmTone(freqs[freqIdx], cDb, EARS[earIdx]);
-    }, 500);
+  // ── Skip frequency (can't hear at all) ──
+  const skipFrequency = () => {
+    const s = ss.current;
+    clearTimers(); stopTone();
+    setPlaying(false); setCanResp(false);
+    recordThreshold(80);
   };
 
-  // User answered confirm question
-  const handleConfirmAnswer = (heard) => {
-    clearTimeout(tmr.current); stopTone();
-    const key = `${EARS[earIdx]}_${freqs[freqIdx]}`;
-    // Heard at 5dB below → threshold = confirmDb. Not heard → threshold = sliderDb.
-    const threshold = heard ? confirmDb : sliderDb;
-    const r = {...results, [key]: threshold};
-    setResults(r);
-    setTimeout(() => advance(r), 400);
-  };
-
-  // Slider change — update gain in real-time
-  const handleSliderChange = (val) => {
-    setSliderDb(val);
-    if (osc.current && gn.current && ac.current) {
-      try { gn.current.gain.linearRampToValueAtTime(dBtoG(val), ac.current.currentTime + 0.05); } catch(_){}
-    }
-  };
-
-  // Start the slider test for current frequency
-  const beginSlider = () => {
-    setSliderDb(60);
-    setStep("slider");
-    startTone(freqs[freqIdx], 60, EARS[earIdx]);
+  // ── Start / switch ear ──
+  const beginTest = () => {
+    setScreen("testing"); resetBracketing(); redraw();
+    t3.current = setTimeout(()=>presentTrial(), 800);
   };
 
   const switchEar = () => {
-    setEarDone(false); setEarIdx(1); setFreqIdx(0); setSliderDb(60);
-    setStep("ready"); setConfirmDb(null); setConfirmAns(null);
+    const s = ss.current;
+    s.earIdx=1; s.freqIdx=0;
+    resetBracketing();
+    setScreen("testing"); redraw();
+    t3.current = setTimeout(()=>presentTrial(), 800);
   };
 
-  useEffect(() => () => {
-    clearTimeout(tmr.current);
-    try { osc.current && osc.current.stop(); } catch(_){}
+  useEffect(()=>()=>{
+    ss.current.active=false; clearTimers();
+    try{osc.current&&osc.current.stop();}catch(_){}
   }, []);
 
-  const done = earIdx * freqs.length + freqIdx;
-  const pct  = (done / (2*freqs.length)) * 100;
+  // ── Computed display values ──
+  const s = ss.current;
+  const done   = s.earIdx * FREQS.length + s.freqIdx;
+  const total  = 2 * FREQS.length;
+  const pct    = (done / total) * 100;
+  const fLabel = f => f>=1000?`${(f/1000).toFixed(f%1000===0?0:1)}k`:`${f}`;
 
-  // ── Mode chooser — shown before first tone ────────────────────────────────
-  if (!testMode) {
-    return (
-      <div style={{animation:"up 0.3s ease"}}>
-        <div style={{textAlign:"center",marginBottom:28}}>
-          <Big t="PURE TONE AUDIOMETRY"/>
-          <Lbl t="CHOOSE TEST RESOLUTION" s={{textAlign:"center",marginTop:5,fontSize:14}}/>
-        </div>
-        <Lbl t="Use headphones or earbuds in a quiet room. Each mode tests both ears." s={{textAlign:"center",marginBottom:16,fontSize:13}}/>
-        {/* Headphone safety warning (Section 9.2-A) */}
-        <Panel s={{marginBottom:14, borderColor:K.amber+"33"}} ch={<>
-          <Lbl t="⚠ HEADPHONE SAFETY" c={K.amber} s={{marginBottom:6}}/>
-          <Lbl t="This test presents tones at various volumes through your headphones. If you experience any pain or discomfort at any point, remove your headphones immediately and stop the test. Do not adjust your system volume during the test — this was set during calibration."
-            s={{lineHeight:1.8, fontSize:13}}/>
-        </>}/>
-        {TEST_MODES.map(m=>{
-          const FMIN=200, FMAX=16000;
-          const logP = f => Math.log2(f/FMIN)/Math.log2(FMAX/FMIN)*100;
-          return (
-          <div key={m.id} onClick={()=>setTestMode(m.id)}
-            style={{background:K.card,border:`1px solid ${K.border}`,borderRadius:14,padding:20,marginBottom:10,cursor:"pointer",transition:"all 0.15s"}}
-            onMouseEnter={e=>e.currentTarget.style.borderColor=K.teal}
-            onMouseLeave={e=>e.currentTarget.style.borderColor=K.border}>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
-              <Big t={m.label} sz={20} c={K.teal}/>
-              <Lbl t={m.est} c={K.amber} sz={13}/>
-            </div>
-            <Lbl t={m.desc} s={{lineHeight:1.8,marginBottom:10}}/>
-            {/* Visual frequency coverage bar */}
-            <div style={{position:"relative",height:18,background:K.dim,borderRadius:3,marginBottom:3}}>
-              {m.freqs.map(f=>(
-                <div key={f} title={hzFmt(f)} style={{position:"absolute",left:`${logP(f)}%`,top:"50%",
-                  transform:"translate(-50%,-50%)",width:3,height:12,
-                  background:K.teal,borderRadius:2,opacity:0.85}}/>
-              ))}
-            </div>
-            <div style={{position:"relative",height:12}}>
-              {[250,500,1000,2000,4000,8000,16000].map(f=>(
-                <span key={f} style={{position:"absolute",left:`${logP(f)}%`,transform:"translateX(-50%)",
-                  fontSize:7,color:K.sub,fontFamily:"'Courier New',monospace"}}>
-                  {f>=1000?`${f/1000}k`:f}
-                </span>
-              ))}
-            </div>
-          </div>
-          );
-        })}
-        <div style={{textAlign:"center",marginTop:14}}>
-          <button onClick={onSkip} style={{fontFamily:"system-ui",fontSize:12,padding:"8px 24px",background:"transparent",border:`1px solid ${K.muted}`,borderRadius:7,color:K.muted,transition:"all 0.2s",letterSpacing:"0.1em"}}
-            onMouseEnter={e=>{e.currentTarget.style.borderColor=K.teal;e.currentTarget.style.color=K.teal;}}
-            onMouseLeave={e=>{e.currentTarget.style.borderColor=K.muted;e.currentTarget.style.color=K.muted;}}>
-            SKIP HEARING TEST → GO TO THERAPY
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  if (earDone) {
-    return (
-      <div style={{animation:"up 0.3s ease"}}>
-        <Panel s={{textAlign:"center",padding:52}} ch={<>
-          <div style={{fontSize:60,marginBottom:20}}>👂</div>
-          <Big t="LEFT EAR COMPLETE" sz={26} c={K.teal} s={{marginBottom:14}}/>
-          <Lbl t={<>Now switch to test your <span style={{color:K.text}}>RIGHT EAR</span>. Seat the right earbud comfortably, then continue.</>}
-            s={{fontSize:12,lineHeight:1.9,maxWidth:360,margin:"0 auto 32px",display:"block"}}/>
-          <button onClick={switchEar} style={{fontFamily:"system-ui",fontWeight:700,fontSize:14,letterSpacing:"0.12em",padding:"16px 48px",background:"rgba(0,212,180,0.08)",border:`1px solid ${K.teal}`,borderRadius:8,color:K.teal}}>
-            TEST RIGHT EAR →
-          </button>
-        </>}/>
-      </div>
-    );
-  }
-
-  return (
+  // ── INTRO SCREEN ──
+  if (screen==="intro") return (
     <div style={{animation:"up 0.3s ease"}}>
-      <div style={{textAlign:"center",marginBottom:20}}>
-        <Big t="PURE TONE AUDIOMETRY"/>
-        <Lbl t={`${EARS[earIdx]==="left"?"◄ LEFT EAR":"RIGHT EAR ►"} · ${fLabel(freqs[freqIdx])}Hz`} s={{textAlign:"center",marginTop:5,fontSize:14}}/>
+      <div style={{textAlign:"center",marginBottom:24}}>
+        <Big t="HEARING TEST"/>
+        <Lbl t="EXTENDED PURE TONE AUDIOMETRY" s={{textAlign:"center",marginTop:5,fontSize:13,letterSpacing:"0.15em"}}/>
       </div>
-
-      {/* False-positive warning — removed (no catch trials in slider mode) */}
 
       <Panel s={{marginBottom:14}} ch={<>
+        <Lbl t="HOW IT WORKS" c={K.text} s={{marginBottom:10}}/>
+        <Lbl t="Short tones will play one at a time. Press the button whenever you hear a tone — even faintly. The test automatically finds your hearing threshold at each frequency using the clinical bracketing method." s={{lineHeight:1.9,fontSize:13,marginBottom:14}}/>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+          {[
+            ["🎧","11 frequencies","500 Hz – 16 kHz"],
+            ["👂","Both ears","Left first, then right"],
+            ["⏱","~3–4 minutes","Fully automatic"],
+            ["📊","Clinical method","Descend 10 / Ascend 5"],
+          ].map(([icon,title,sub])=>(
+            <div key={title} style={{background:K.dim,borderRadius:8,padding:"10px 12px",textAlign:"center"}}>
+              <div style={{fontSize:20,marginBottom:4}}>{icon}</div>
+              <Lbl t={title} c={K.text} s={{fontSize:12,marginBottom:2}}/>
+              <Lbl t={sub} s={{fontSize:10}}/>
+            </div>
+          ))}
+        </div>
+      </>}/>
+
+      <Panel s={{marginBottom:14,borderColor:K.amber+"33"}} ch={<>
+        <Lbl t="⚠ BEFORE YOU BEGIN" c={K.amber} s={{marginBottom:6}}/>
+        <Lbl t="Use headphones or earbuds in a quiet room. If you experience any pain or discomfort, remove headphones and stop immediately. Do not adjust system volume during the test." s={{lineHeight:1.8,fontSize:13}}/>
+      </>}/>
+
+      <button onClick={beginTest} style={{width:"100%",fontFamily:"system-ui",fontWeight:700,fontSize:15,letterSpacing:"0.12em",
+        padding:"16px",background:"rgba(0,212,180,0.08)",border:`1px solid ${K.teal}`,borderRadius:10,color:K.teal,
+        animation:"glow 2s infinite",marginBottom:12}}>
+        ▶ BEGIN HEARING TEST
+      </button>
+
+      <div style={{textAlign:"center"}}>
+        <button onClick={onSkip} style={{fontFamily:"system-ui",fontSize:12,padding:"8px 24px",background:"transparent",
+          border:`1px solid ${K.muted}`,borderRadius:7,color:K.muted,transition:"all 0.2s",letterSpacing:"0.1em"}}
+          onMouseEnter={e=>{e.currentTarget.style.borderColor=K.teal;e.currentTarget.style.color=K.teal;}}
+          onMouseLeave={e=>{e.currentTarget.style.borderColor=K.muted;e.currentTarget.style.color=K.muted;}}>
+          SKIP → GO TO TONE FINDER
+        </button>
+      </div>
+    </div>
+  );
+
+  // ── EAR SWITCH SCREEN ──
+  if (screen==="earSwitch") return (
+    <div style={{animation:"up 0.3s ease"}}>
+      <Panel s={{textAlign:"center",padding:52}} ch={<>
+        <div style={{fontSize:60,marginBottom:20}}>👂</div>
+        <Big t="LEFT EAR COMPLETE" sz={26} c={K.teal} s={{marginBottom:14}}/>
+        <Lbl t={<>Now switch to test your <span style={{color:K.text}}>RIGHT EAR</span>. Seat the right earbud comfortably, then continue.</>}
+          s={{fontSize:12,lineHeight:1.9,maxWidth:360,margin:"0 auto 32px",display:"block"}}/>
+        <button onClick={switchEar} style={{fontFamily:"system-ui",fontWeight:700,fontSize:14,letterSpacing:"0.12em",
+          padding:"16px 48px",background:"rgba(0,212,180,0.08)",border:`1px solid ${K.teal}`,borderRadius:8,color:K.teal}}>
+          TEST RIGHT EAR →
+        </button>
+      </>}/>
+    </div>
+  );
+
+  // ── TESTING SCREEN ──
+  return (
+    <div style={{animation:"up 0.3s ease"}}>
+      {/* Header */}
+      <div style={{textAlign:"center",marginBottom:16}}>
+        <Big t="HEARING TEST"/>
+        <Lbl t={`${EARS[s.earIdx]==="left"?"◄ LEFT EAR":"RIGHT EAR ►"} · ${fLabel(FREQS[s.freqIdx])} Hz`}
+          s={{textAlign:"center",marginTop:5,fontSize:14}}/>
+      </div>
+
+      {/* Progress */}
+      <Panel s={{marginBottom:14}} ch={<>
         <div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}>
-          <Lbl t="OVERALL PROGRESS"/>
+          <Lbl t="PROGRESS"/>
           <Lbl t={`${Math.round(pct)}%`} c={K.teal}/>
         </div>
-        <div style={{background:K.dim,borderRadius:3,height:4,marginBottom:16}}>
+        <div style={{background:K.dim,borderRadius:3,height:4,marginBottom:14}}>
           <div style={{background:`linear-gradient(90deg,${K.teal},#00a896)`,width:`${pct}%`,height:"100%",borderRadius:3,transition:"width 0.5s"}}/>
         </div>
         <div style={{display:"flex",gap:12}}>
-          {EARS.map((ear,ei) => (
+          {EARS.map((ear,ei)=>(
             <div key={ear} style={{flex:1}}>
               <Lbl t={ear==="left"?"◄ LEFT":"RIGHT ►"} s={{marginBottom:6,fontSize:12}}/>
-              <div style={{display:"flex",gap:2}}>
-                {freqs.map((f,fi) => {
-                  const isDone = results[`${ear}_${f}`] !== undefined;
-                  const isActive = earIdx===ei && freqIdx===fi;
+              <div style={{display:"flex",gap:3}}>
+                {FREQS.map((f,fi)=>{
+                  const isDone = s.results[`${ear}_${f}`]!==undefined;
+                  const isActive = s.earIdx===ei && s.freqIdx===fi;
                   return (
-                    <div key={f} style={{flex:1,height:22,borderRadius:3,minWidth:0,
-                      background:isDone?"rgba(0,212,180,0.18)":isActive?"rgba(0,212,180,0.32)":"transparent",
+                    <div key={f} style={{flex:1,height:26,borderRadius:4,
+                      background:isDone?"rgba(0,212,180,0.15)":isActive?"rgba(0,212,180,0.25)":"transparent",
                       border:`1px solid ${isDone?K.teal:isActive?K.teal:K.dim}`,
                       display:"flex",alignItems:"center",justifyContent:"center",transition:"all 0.3s"}}>
-                      {isDone&&<span style={{fontSize:8,color:K.teal}}>✓</span>}
-                      {isActive&&!isDone&&<span style={{fontSize:7,color:K.teal,animation:"pulse 1.5s infinite"}}>●</span>}
+                      {isDone&&<span style={{fontSize:9,color:K.teal}}>✓</span>}
+                      {isActive&&!isDone&&<span style={{fontSize:8,color:K.teal,animation:"pulse 1.5s infinite"}}>●</span>}
                     </div>
                   );
                 })}
               </div>
-              <div style={{display:"flex",gap:2,marginTop:2}}>
-                {freqs.map((f,fi)=>(
-                  <div key={f} style={{flex:1,textAlign:"center",minWidth:0,overflow:"hidden"}}>
-                    <Lbl t={fLabel(f)} s={{fontSize:6,color:earIdx===ei&&freqIdx===fi?K.teal:K.sub}}/>
+              <div style={{display:"flex",gap:3,marginTop:2}}>
+                {FREQS.map(f=>(
+                  <div key={f} style={{flex:1,textAlign:"center"}}>
+                    <Lbl t={fLabel(f)} s={{fontSize:7,color:K.sub}}/>
                   </div>
                 ))}
               </div>
@@ -1040,76 +1075,99 @@ function HearingTest({onComplete, onSkip, calibrated}) {
         </div>
       </>}/>
 
-      <Panel s={{marginBottom:14,minHeight:210,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",textAlign:"center"}} ch={<>
-        {step==="ready"&&<>
-          <div style={{fontSize:44,marginBottom:16}}>🎧</div>
-          <Lbl t="READY TO TEST" c={K.text} sz={12} s={{marginBottom:6}}/>
-          <Lbl t={`${EARS[earIdx]==="left"?"◄ Left":"Right ►"} ear · ${hzFmt(freqs[freqIdx])}`} s={{marginBottom:28,lineHeight:1.7}}/>
-          <button onClick={beginSlider} style={{fontFamily:"system-ui",fontWeight:600,fontSize:13,letterSpacing:"0.12em",padding:"13px 36px",background:"rgba(0,212,180,0.1)",border:`1px solid ${K.teal}`,borderRadius:8,color:K.teal}}>▶ START TONE</button>
-        </>}
+      {/* Main interaction area */}
+      <Panel s={{marginBottom:14,minHeight:260,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",textAlign:"center"}} ch={<>
 
-        {step==="slider"&&<>
-          <Lbl t={`${EARS[earIdx]==="left"?"◄ LEFT":"RIGHT ►"} EAR · ${hzFmt(freqs[freqIdx])}`} c={K.teal} sz={12} s={{marginBottom:4}}/>
-          <Lbl t="Slide down until you can barely hear the tone" s={{marginBottom:16,fontSize:13,lineHeight:1.7}}/>
-          <Big t={<>{sliderDb}<span style={{fontSize:14,color:K.sub}}> dBHL</span></>} sz={38} c={K.text} s={{marginBottom:4}}/>
-          <Lbl t={catFor(sliderDb).label} c={catFor(sliderDb).color} s={{fontSize:12,marginBottom:16}}/>
-          <div style={{width:"100%",maxWidth:320,marginBottom:8}}>
-            <input type="range" min={0} max={80} step={5} value={sliderDb}
-              onChange={e=>handleSliderChange(Number(e.target.value))}
-              style={{width:"100%",accentColor:K.teal,height:32,cursor:"pointer"}}/>
-            <div style={{display:"flex",justifyContent:"space-between",marginTop:2}}>
-              <Lbl t="0 dB" s={{fontSize:10}}/>
-              <Lbl t="80 dB" s={{fontSize:10}}/>
-            </div>
-          </div>
-          <div style={{display:"flex",gap:8,marginTop:16}}>
-            <button onClick={()=>{stopTone(); setSliderDb(0); const key=`${EARS[earIdx]}_${freqs[freqIdx]}`; const r={...results,[key]:0}; setResults(r); setTimeout(()=>advance(r),400);}}
-              style={{padding:"10px 20px",background:"rgba(255,71,87,0.1)",border:`1px solid ${K.red}`,borderRadius:7,color:K.red,fontFamily:"system-ui",fontWeight:600,fontSize:11}}>CAN'T HEAR AT ALL</button>
-            <button onClick={handleSliderSet}
-              style={{padding:"10px 28px",background:"rgba(0,212,180,0.12)",border:`1px solid ${K.teal}`,borderRadius:7,color:K.teal,fontFamily:"system-ui",fontWeight:700,fontSize:13}}>✓ SET THRESHOLD</button>
-          </div>
-        </>}
+        {/* Frequency label */}
+        <Lbl t={`${EARS[s.earIdx]==="left"?"◄ LEFT":"RIGHT ►"} · ${fLabel(FREQS[s.freqIdx])} Hz`}
+          c={K.teal} sz={12} s={{marginBottom:16,letterSpacing:"0.1em"}}/>
 
-        {step==="confirm"&&<>
-          <div style={{display:"flex",gap:6,alignItems:"flex-end",height:50,marginBottom:16}}>
-            {[0,1,2,3,4].map(i=>(
-              <div key={i} style={{width:9,background:K.teal,borderRadius:4,opacity:0.75,
-                animation:`bar ${0.5+i*0.12}s ease-in-out infinite`,animationDelay:`${i*0.08}s`,
-                height:`${20+i*9}px`,transformOrigin:"bottom"}}/>
+        {/* Animated ring — visible when tone is playing */}
+        <div style={{position:"relative",width:130,height:130,marginBottom:20}}>
+          {playing ? <>
+            {[0,1,2].map(i=>(
+              <div key={i} style={{position:"absolute",inset:0,border:`2px solid ${K.teal}`,borderRadius:"50%",
+                animation:`ping 1.5s ease-out infinite`,animationDelay:`${i*0.4}s`}}/>
             ))}
-          </div>
-          <Lbl t="CONFIRMING…" c={K.text} sz={13} s={{marginBottom:6}}/>
-          <Lbl t={`Playing at ${confirmDb} dBHL (5 dB below your setting)`} s={{fontSize:12,lineHeight:1.7}}/>
-        </>}
+            <div style={{position:"absolute",inset:"25%",background:`radial-gradient(circle, ${K.teal}44, transparent)`,
+              borderRadius:"50%",animation:"pulse 1s infinite"}}/>
+            <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center"}}>
+              <span style={{fontSize:28,color:K.teal,fontWeight:700}}>♪</span>
+            </div>
+          </> : feedback==="heard" ? <>
+            <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center"}}>
+              <span style={{fontSize:48,color:K.teal}}>✓</span>
+            </div>
+          </> : feedback==="missed" ? <>
+            <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center"}}>
+              <span style={{fontSize:28,color:K.sub}}>—</span>
+            </div>
+          </> : feedback==="done" ? <>
+            <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column"}}>
+              <span style={{fontSize:36,color:K.teal}}>✓</span>
+              <Lbl t="THRESHOLD SET" c={K.teal} s={{fontSize:10,marginTop:4}}/>
+            </div>
+          </> : waiting ? <>
+            <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center"}}>
+              <Lbl t="Listen…" c={K.sub} s={{fontSize:14,fontStyle:"italic"}}/>
+            </div>
+          </> : <>
+            <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center"}}>
+              <Lbl t="Get ready…" c={K.sub} s={{fontSize:14,fontStyle:"italic"}}/>
+            </div>
+          </>}
+        </div>
 
-        {step==="confirmWait"&&<>
-          <Lbl t="DID YOU HEAR THAT TONE?" c={K.text} sz={14} s={{marginBottom:6}}/>
-          <Lbl t={`Played at ${confirmDb} dBHL — 5 dB below your slider level`} s={{marginBottom:24,fontSize:12,lineHeight:1.7}}/>
-          <div style={{display:"flex",gap:12}}>
-            <button onClick={()=>handleConfirmAnswer(true)} style={{padding:"16px 40px",background:"rgba(0,212,180,0.12)",border:`1px solid ${K.teal}`,borderRadius:8,color:K.teal,fontFamily:"system-ui",fontWeight:700,fontSize:15}}>✓ YES</button>
-            <button onClick={()=>handleConfirmAnswer(false)} style={{padding:"16px 40px",background:"rgba(255,71,87,0.12)",border:`1px solid ${K.red}`,borderRadius:8,color:K.red,fontFamily:"system-ui",fontWeight:700,fontSize:15}}>✗ NO</button>
-          </div>
-        </>}
+        {/* Response buttons */}
+        <div style={{display:"flex",gap:14,marginBottom:8}}>
+          <button onClick={handleResponse} disabled={!canResp}
+            style={{padding:"18px 36px",borderRadius:12,fontFamily:"system-ui",fontWeight:700,fontSize:16,
+              letterSpacing:"0.06em",border:"none",cursor:canResp?"pointer":"default",transition:"all 0.15s",
+              background:canResp?K.teal:"rgba(255,255,255,0.04)",
+              color:canResp?"#111":K.dim,
+              boxShadow:canResp?`0 0 20px ${K.teal}55`:"none",
+              transform:canResp?"scale(1)":"scale(0.95)",
+              opacity:canResp?1:0.3}}>
+            ✓ I HEAR IT
+          </button>
+          <button onClick={handleNoResponse} disabled={!canResp}
+            style={{padding:"18px 36px",borderRadius:12,fontFamily:"system-ui",fontWeight:700,fontSize:16,
+              letterSpacing:"0.06em",border:"none",cursor:canResp?"pointer":"default",transition:"all 0.15s",
+              background:canResp?K.red:"rgba(255,255,255,0.04)",
+              color:canResp?"#fff":K.dim,
+              boxShadow:canResp?`0 0 20px rgba(255,71,87,0.3)`:"none",
+              transform:canResp?"scale(1)":"scale(0.95)",
+              opacity:canResp?1:0.3}}>
+            ✗ I DON'T HEAR IT
+          </button>
+        </div>
+
+        {/* Skip entire frequency */}
+        {canResp && (
+          <button onClick={skipFrequency}
+            style={{marginTop:8,fontFamily:"system-ui",fontSize:11,padding:"6px 16px",
+              background:"transparent",border:`1px solid ${K.dim}`,borderRadius:6,
+              color:K.muted,transition:"all 0.2s"}}>
+            Skip this frequency entirely
+          </button>
+        )}
+
+        {/* Trial info (subtle) */}
+        <Lbl t={`Trial ${s.trial+1} · ${s.level} dBHL`} s={{marginTop:16,fontSize:10,color:K.dim}}/>
       </>}/>
 
+      {/* Info */}
       <Panel s={{borderColor:K.dim}} ch={
-        <div style={{display:"flex",gap:20}}>
-          <div style={{flex:1}}>
-            <Lbl t="CURRENT LEVEL" s={{marginBottom:6}}/>
-            <Big t={<>{step==="slider"?sliderDb:(confirmDb||sliderDb)}<span style={{fontSize:13}}> dBHL</span></>} sz={30} c={K.teal}/>
-            <Lbl t={catFor(step==="slider"?sliderDb:(confirmDb||sliderDb)).label+" zone"} c={catFor(step==="slider"?sliderDb:(confirmDb||sliderDb)).color} s={{marginTop:4,fontSize:13}}/>
-          </div>
-          <div style={{flex:2,borderLeft:`1px solid ${K.dim}`,paddingLeft:20}}>
-            <Lbl t="HOW IT WORKS" s={{marginBottom:8}}/>
-            <Lbl t="A continuous tone plays while you drag the slider down until you can barely hear it. Tap SET THRESHOLD, then we play one confirmation tone 5 dB lower. If you hear it, we record that lower level. If not, your slider level is the threshold. Quick, accurate, no bouncing." s={{lineHeight:1.9,fontSize:13}}/>
-          </div>
-        </div>
+        <Lbl t="A tone plays for each trial. Press the green button if you hear it — even faintly — or the red button if you don't. The volume adjusts automatically to find your threshold." s={{lineHeight:1.8,fontSize:12}}/>
       }/>
+
       <div style={{textAlign:"center",marginTop:14}}>
-        <button onClick={onSkip} style={{fontFamily:"system-ui",fontSize:12,padding:"8px 24px",background:"transparent",border:`1px solid ${K.muted}`,borderRadius:7,color:K.muted,transition:"all 0.2s",letterSpacing:"0.1em"}}
+        <button onClick={()=>{clearTimers();stopTone();onSkip();}} style={{fontFamily:"system-ui",fontSize:12,padding:"8px 24px",
+          background:"transparent",border:`1px solid ${K.muted}`,borderRadius:7,color:K.muted,
+          transition:"all 0.2s",letterSpacing:"0.1em"}}
           onMouseEnter={e=>{e.currentTarget.style.borderColor=K.teal;e.currentTarget.style.color=K.teal;}}
           onMouseLeave={e=>{e.currentTarget.style.borderColor=K.muted;e.currentTarget.style.color=K.muted;}}>
-          SKIP HEARING TEST → GO TO THERAPY
+          STOP TEST → GO TO TONE FINDER
         </button>
       </div>
     </div>
@@ -1298,7 +1356,7 @@ function HistoryScreen({user}) {
 
   const AudiogramTab = () => {
     const recent   = audiograms.slice(-6);
-    const allFreqs = [500,1000,2000,3000,4000,6000,8000];
+    const allFreqs = [500,1000,2000,3000,4000,6000,8000,10000,12000,14000,16000];
     const W=400, H=220, pl=40, pr=10, pt=18, pb=32;
     const iw=W-pl-pr, ih=H-pt-pb;
     const xOf = f  => pl + iw*Math.log2(f/250)/Math.log2(20000/250);
