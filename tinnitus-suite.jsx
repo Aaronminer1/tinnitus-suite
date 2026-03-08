@@ -775,7 +775,8 @@ function HearingTest({onComplete, onSkip, calibrated}) {
   const [cdCount, setCdCount] = useState(null);
   const [lastAns, setLastAns] = useState(null);
   const [earDone, setEarDone] = useState(false);
-  const [hwPhase, setHwPhase] = useState("descend"); // descend until miss, then ascend until heard
+  const [hwPhase, setHwPhase] = useState("descend"); // descend until miss, then one ascending confirmation
+  const [lastHeard, setLastHeard] = useState(60);     // track last heard level for threshold fallback
   const [catchTrialsDone, setCatchTrialsDone] = useState(0);
   const [falsePositives, setFalsePositives]   = useState(0);
   const [toneActuallyPlayed, setToneActuallyPlayed] = useState(false); // gate pre-tone responses
@@ -833,7 +834,7 @@ function HearingTest({onComplete, onSkip, calibrated}) {
     // Auto-save intermediate results so a crash doesn't lose the entire test
     try { sessionStorage.setItem("ht_partial", JSON.stringify(res)); } catch(_) {}
     if (freqIdx < freqs.length-1) {
-      setFreqIdx(freqIdx+1); setDB(60); setHwPhase("descend"); setStep("ready"); setLastAns(null);
+      setFreqIdx(freqIdx+1); setDB(60); setHwPhase("descend"); setLastHeard(60); setStep("ready"); setLastAns(null);
     } else if (earIdx === 0) {
       setEarDone(true);
     } else {
@@ -860,16 +861,14 @@ function HearingTest({onComplete, onSkip, calibrated}) {
 
     if (heard) {
       if (hwPhase === "ascend") {
-        // ── Ascending heard = THRESHOLD FOUND ──
-        // Single-pass bracketing: first ascending "heard" is the threshold.
-        // No re-descending, no bouncing. Record and move on.
+        // ── Ascending heard = THRESHOLD at this level ──
         const r = {...results, [key]: dB};
         setResults(r);
         setTimeout(() => advance(r), 400);
       } else {
-        // ── Descending heard: step down 10 dB ──
+        // ── Descending heard: track last heard level, step down 10 dB ──
+        setLastHeard(dB);
         if (dB <= 0) {
-          // Can't go lower — threshold = 0 (excellent hearing)
           const r = {...results, [key]: 0};
           setResults(r); setTimeout(() => advance(r), 400);
         } else {
@@ -880,16 +879,20 @@ function HearingTest({onComplete, onSkip, calibrated}) {
     } else {
       // ── Not heard ──
       if (hwPhase === "descend") {
-        // First miss during descent → switch to ascending
+        // First miss during descent → play ONE confirmation 5 dB up
         setHwPhase("ascend");
-      }
-      // Ascend 5 dB
-      const next = dB + 5;
-      if (next > 110) {
-        const r = {...results, [key]: 110};
-        setResults(r); setTimeout(() => advance(r), 400);
+        const next = dB + 5;
+        if (next > 110) {
+          const r = {...results, [key]: 110};
+          setResults(r); setTimeout(() => advance(r), 400);
+        } else {
+          setDB(next); setTimeout(() => { setStep("ready"); setLastAns(null); }, 400);
+        }
       } else {
-        setDB(next); setTimeout(() => { setStep("ready"); setLastAns(null); }, 400);
+        // Ascending miss → threshold = last heard level (the one before the miss)
+        const r = {...results, [key]: lastHeard};
+        setResults(r);
+        setTimeout(() => advance(r), 400);
       }
     }
   };
@@ -899,8 +902,8 @@ function HearingTest({onComplete, onSkip, calibrated}) {
     setStep("countdown"); setLastAns(null); setToneActuallyPlayed(false);
     catchPendingR.current = false;
 
-    // ~15% chance of catch trial (no tone) for false-positive detection
-    const isCatch = Math.random() < 0.15;
+    // ~15% chance of catch trial — only during descent (never during the single ascending confirmation)
+    const isCatch = hwPhase === "descend" && Math.random() < 0.15;
     if (isCatch) catchPendingR.current = true;
 
     let c = 3; setCdCount(c);
@@ -928,7 +931,7 @@ function HearingTest({onComplete, onSkip, calibrated}) {
 
   const switchEar = () => {
     setEarDone(false); setEarIdx(1); setFreqIdx(0); setDB(60); setHwPhase("descend");
-    setStep("ready"); setLastAns(null);
+    setLastHeard(60); setStep("ready"); setLastAns(null);
   };
 
   useEffect(() => () => {
