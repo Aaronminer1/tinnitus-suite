@@ -766,22 +766,16 @@ function Calibration({onConfirm, onSkip}) {
 
 // ─── Hearing Test ─────────────────────────────────────────────────────────────
 function HearingTest({onComplete, onSkip, calibrated}) {
-  const [testMode, setTestMode] = useState(null); // null = show resolver screen first
+  const [testMode, setTestMode] = useState(null);
   const [earIdx,  setEarIdx]  = useState(0);
   const [freqIdx, setFreqIdx] = useState(0);
-  const [dB,      setDB]      = useState(60); // 60 dBHL start (better centre for tinnitus population)
   const [results, setResults] = useState({});
-  const [step,    setStep]    = useState("ready");
-  const [cdCount, setCdCount] = useState(null);
-  const [lastAns, setLastAns] = useState(null);
+  const [step,    setStep]    = useState("ready"); // ready | slider | confirm | confirmWait
   const [earDone, setEarDone] = useState(false);
-  const [hwPhase, setHwPhase] = useState("descend"); // descend until miss, then one ascending confirmation
-  const [lastHeard, setLastHeard] = useState(60);     // track last heard level for threshold fallback
-  const [catchTrialsDone, setCatchTrialsDone] = useState(0);
-  const [falsePositives, setFalsePositives]   = useState(0);
-  const [toneActuallyPlayed, setToneActuallyPlayed] = useState(false); // gate pre-tone responses
+  const [sliderDb, setSliderDb] = useState(60);      // current slider level (method of adjustment)
+  const [confirmDb, setConfirmDb] = useState(null);   // the 5dB-below level being confirmed
+  const [confirmAns, setConfirmAns] = useState(null); // true/false after confirm tone
 
-  // Active frequency list — derived from selected mode, used by all functions below
   const freqs  = testMode ? TEST_MODES.find(m=>m.id===testMode).freqs : FREQ_STANDARD;
   const fLabel = (f) => f >= 1000 ? `${(f/1000).toFixed(f%1000===0?0:1)}k` : `${f}`;
 
@@ -804,21 +798,25 @@ function HearingTest({onComplete, onSkip, calibrated}) {
     setTimeout(() => { try{ o && o.stop(); }catch(_){} osc.current = null; }, 90);
   };
 
-  const playTone = (freq, db, ear) => {
+  // Start or update a continuous tone at the given dB (used by slider)
+  const startTone = (freq, db, ear) => {
     const ctx = audio();
-    try { osc.current && osc.current.stop(); } catch(_){}
+    if (osc.current) {
+      // Tone already playing — just update gain smoothly
+      if (gn.current) {
+        try { gn.current.gain.linearRampToValueAtTime(dBtoG(db), ctx.currentTime + 0.05); } catch(_){}
+      }
+      return;
+    }
     const o = ctx.createOscillator();
     const g = ctx.createGain();
-    // dBtoG reference=80 → gain=0.9 at 80 dBHL, 0.10 at 60 dBHL (matches CAL_GAIN).
     g.gain.setValueAtTime(0, ctx.currentTime);
     g.gain.linearRampToValueAtTime(dBtoG(db), ctx.currentTime + 0.08);
     o.type = "sine"; o.frequency.value = freq;
     o.connect(g);
     if (ear !== "both" && ctx.destination.channelCount >= 2) {
-      // Route to one ear with explicit silence on opposite channel
       const mg = ctx.createChannelMerger(2);
       g.connect(mg, 0, ear === "left" ? 0 : 1);
-      // Explicit silence on opposite channel — prevents WebView channel bleed
       const silBuf = ctx.createBuffer(1, 128, ctx.sampleRate);
       const silSrc = ctx.createBufferSource();
       silSrc.buffer = silBuf; silSrc.loop = true;
@@ -827,111 +825,89 @@ function HearingTest({onComplete, onSkip, calibrated}) {
       mg.connect(ctx.destination);
     } else { g.connect(ctx.destination); }
     o.start(); osc.current = o; gn.current = g;
-    setToneActuallyPlayed(true);
+  };
+
+  // Play a single short tone for the confirm step
+  const playConfirmTone = (freq, db, ear) => {
+    stopTone();
+    setTimeout(() => {
+      const ctx = audio();
+      const o = ctx.createOscillator();
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0, ctx.currentTime);
+      g.gain.linearRampToValueAtTime(dBtoG(db), ctx.currentTime + 0.08);
+      o.type = "sine"; o.frequency.value = freq;
+      o.connect(g);
+      if (ear !== "both" && ctx.destination.channelCount >= 2) {
+        const mg = ctx.createChannelMerger(2);
+        g.connect(mg, 0, ear === "left" ? 0 : 1);
+        const silBuf = ctx.createBuffer(1, 128, ctx.sampleRate);
+        const silSrc = ctx.createBufferSource();
+        silSrc.buffer = silBuf; silSrc.loop = true;
+        silSrc.connect(mg, 0, ear === "left" ? 1 : 0);
+        silSrc.start();
+        mg.connect(ctx.destination);
+      } else { g.connect(ctx.destination); }
+      o.start(); osc.current = o; gn.current = g;
+      // Auto-stop after 1.5s, then show confirm buttons
+      tmr.current = setTimeout(() => { stopTone(); setStep("confirmWait"); }, 1500);
+    }, 150);
   };
 
   const advance = (res) => {
-    // Auto-save intermediate results so a crash doesn't lose the entire test
     try { sessionStorage.setItem("ht_partial", JSON.stringify(res)); } catch(_) {}
     if (freqIdx < freqs.length-1) {
-      setFreqIdx(freqIdx+1); setDB(60); setHwPhase("descend"); setLastHeard(60); setStep("ready"); setLastAns(null);
+      setFreqIdx(freqIdx+1); setSliderDb(60); setStep("ready"); setConfirmDb(null); setConfirmAns(null);
     } else if (earIdx === 0) {
       setEarDone(true);
     } else {
       try { sessionStorage.removeItem("ht_partial"); } catch(_) {}
-      onComplete(res, testMode, !!calibrated, falsePositives, catchTrialsDone);
+      onComplete(res, testMode, !!calibrated, 0, 0);
     }
   };
 
-  const answer = (heard) => {
-    if (step !== "respond" && step !== "playing") return;
-    // Gate: reject responses before tone actually played (prevents pre-tone false positives)
-    if (!toneActuallyPlayed) return;
-    clearTimeout(tmr.current); stopTone(); setLastAns(heard); setToneActuallyPlayed(false);
+  // User set their slider level — now do 5dB confirmation
+  const handleSliderSet = () => {
+    stopTone();
+    const cDb = Math.max(0, sliderDb - 5);
+    setConfirmDb(cDb);
+    setConfirmAns(null);
+    setStep("confirm");
+    // Play the confirm tone at 5dB below after a brief pause
+    setTimeout(() => {
+      playConfirmTone(freqs[freqIdx], cDb, EARS[earIdx]);
+    }, 500);
+  };
+
+  // User answered confirm question
+  const handleConfirmAnswer = (heard) => {
+    clearTimeout(tmr.current); stopTone();
     const key = `${EARS[earIdx]}_${freqs[freqIdx]}`;
+    // Heard at 5dB below → threshold = confirmDb. Not heard → threshold = sliderDb.
+    const threshold = heard ? confirmDb : sliderDb;
+    const r = {...results, [key]: threshold};
+    setResults(r);
+    setTimeout(() => advance(r), 400);
+  };
 
-    // Check if this was a catch trial (no-tone presentation)
-    if (step === "respond" && catchPendingR.current) {
-      catchPendingR.current = false;
-      setCatchTrialsDone(c => c + 1);
-      if (heard) setFalsePositives(fp => fp + 1); // false positive — said YES to silence
-      setTimeout(() => { setStep("ready"); setLastAns(null); }, 400);
-      return;
-    }
-
-    if (heard) {
-      if (hwPhase === "ascend") {
-        // ── Ascending heard = THRESHOLD at this level ──
-        const r = {...results, [key]: dB};
-        setResults(r);
-        setTimeout(() => advance(r), 400);
-      } else {
-        // ── Descending heard: track last heard level, step down 10 dB ──
-        setLastHeard(dB);
-        if (dB <= 0) {
-          const r = {...results, [key]: 0};
-          setResults(r); setTimeout(() => advance(r), 400);
-        } else {
-          setDB(Math.max(0, dB - 10));
-          setTimeout(() => { setStep("ready"); setLastAns(null); }, 400);
-        }
-      }
-    } else {
-      // ── Not heard ──
-      if (hwPhase === "descend") {
-        // First miss during descent → play ONE confirmation 5 dB up
-        setHwPhase("ascend");
-        const next = dB + 5;
-        if (next > 110) {
-          const r = {...results, [key]: 110};
-          setResults(r); setTimeout(() => advance(r), 400);
-        } else {
-          setDB(next); setTimeout(() => { setStep("ready"); setLastAns(null); }, 400);
-        }
-      } else {
-        // Ascending miss → threshold = last heard level (the one before the miss)
-        const r = {...results, [key]: lastHeard};
-        setResults(r);
-        setTimeout(() => advance(r), 400);
-      }
+  // Slider change — update gain in real-time
+  const handleSliderChange = (val) => {
+    setSliderDb(val);
+    if (osc.current && gn.current && ac.current) {
+      try { gn.current.gain.linearRampToValueAtTime(dBtoG(val), ac.current.currentTime + 0.05); } catch(_){}
     }
   };
 
-  const catchPendingR = useRef(false); // true if current trial is a catch (no-tone)
-  const runTrial = () => {
-    setStep("countdown"); setLastAns(null); setToneActuallyPlayed(false);
-    catchPendingR.current = false;
-
-    // ~15% chance of catch trial — only during descent (never during the single ascending confirmation)
-    const isCatch = hwPhase === "descend" && Math.random() < 0.15;
-    if (isCatch) catchPendingR.current = true;
-
-    let c = 3; setCdCount(c);
-    const tick = setInterval(() => {
-      c--;
-      if (c <= 0) {
-        clearInterval(tick); setCdCount(null); setStep("playing");
-        // Variable random delay 400-1600ms
-        tmr.current = setTimeout(() => {
-          if (isCatch) {
-            // Catch trial — no tone, just wait then ask
-            setToneActuallyPlayed(true); // allow response
-            // Variable silence duration 1200-2200ms (matches tone duration range)
-            tmr.current = setTimeout(() => { setStep("respond"); }, 1200 + Math.random()*1000);
-          } else {
-            playTone(freqs[freqIdx], dB, EARS[earIdx]);
-            // Variable tone duration 1200-2200ms (clinical standard: 1-3s)
-            const toneDur = 1200 + Math.random() * 1000;
-            tmr.current = setTimeout(() => { stopTone(); setStep("respond"); }, toneDur);
-          }
-        }, 400 + Math.random()*1200);
-      } else { setCdCount(c); }
-    }, 1000);
+  // Start the slider test for current frequency
+  const beginSlider = () => {
+    setSliderDb(60);
+    setStep("slider");
+    startTone(freqs[freqIdx], 60, EARS[earIdx]);
   };
 
   const switchEar = () => {
-    setEarDone(false); setEarIdx(1); setFreqIdx(0); setDB(60); setHwPhase("descend");
-    setLastHeard(60); setStep("ready"); setLastAns(null);
+    setEarDone(false); setEarIdx(1); setFreqIdx(0); setSliderDb(60);
+    setStep("ready"); setConfirmDb(null); setConfirmAns(null);
   };
 
   useEffect(() => () => {
@@ -1020,16 +996,10 @@ function HearingTest({onComplete, onSkip, calibrated}) {
     <div style={{animation:"up 0.3s ease"}}>
       <div style={{textAlign:"center",marginBottom:20}}>
         <Big t="PURE TONE AUDIOMETRY"/>
-        <Lbl t={`${EARS[earIdx]==="left"?"◄ LEFT EAR":"RIGHT EAR ►"} · ${fLabel(freqs[freqIdx])}Hz · ${dB} dBHL`} s={{textAlign:"center",marginTop:5,fontSize:14}}/>
+        <Lbl t={`${EARS[earIdx]==="left"?"◄ LEFT EAR":"RIGHT EAR ►"} · ${fLabel(freqs[freqIdx])}Hz`} s={{textAlign:"center",marginTop:5,fontSize:14}}/>
       </div>
 
-      {/* False-positive warning if catch-trial failure rate > 30% */}
-      {catchTrialsDone >= 2 && falsePositives / catchTrialsDone > 0.3 && (
-        <Panel s={{marginBottom:14,borderColor:K.red+"55"}} ch={<>
-          <Lbl t="⚠ RESPONSE ACCURACY CONCERN" c={K.red} s={{marginBottom:6}}/>
-          <Lbl t={`You responded "heard" to ${falsePositives} of ${catchTrialsDone} silent catch trials. This may indicate you're pressing YES before confirming the tone. Please listen carefully and only respond YES when you're certain you heard something.`} s={{lineHeight:1.8,fontSize:13}}/>
-        </>}/>
-      )}
+      {/* False-positive warning — removed (no catch trials in slider mode) */}
 
       <Panel s={{marginBottom:14}} ch={<>
         <div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}>
@@ -1074,37 +1044,50 @@ function HearingTest({onComplete, onSkip, calibrated}) {
         {step==="ready"&&<>
           <div style={{fontSize:44,marginBottom:16}}>🎧</div>
           <Lbl t="READY TO TEST" c={K.text} sz={12} s={{marginBottom:6}}/>
-          <Lbl t={`${EARS[earIdx]==="left"?"◄ Left":"Right ►"} ear · ${hzFmt(freqs[freqIdx])} · ${dB} dBHL`} s={{marginBottom:lastAns===false?12:28,lineHeight:1.7}}/>
-          {lastAns===false&&<Lbl t={`Not heard — volume increased to ${dB} dBHL`} c={K.amber} s={{marginBottom:20,fontSize:14}}/>}
-          <button onClick={runTrial} style={{fontFamily:"system-ui",fontWeight:600,fontSize:13,letterSpacing:"0.12em",padding:"13px 36px",background:"rgba(0,212,180,0.1)",border:`1px solid ${K.teal}`,borderRadius:8,color:K.teal}}>▶ PLAY TONE</button>
+          <Lbl t={`${EARS[earIdx]==="left"?"◄ Left":"Right ►"} ear · ${hzFmt(freqs[freqIdx])}`} s={{marginBottom:28,lineHeight:1.7}}/>
+          <button onClick={beginSlider} style={{fontFamily:"system-ui",fontWeight:600,fontSize:13,letterSpacing:"0.12em",padding:"13px 36px",background:"rgba(0,212,180,0.1)",border:`1px solid ${K.teal}`,borderRadius:8,color:K.teal}}>▶ START TONE</button>
         </>}
 
-        {step==="countdown"&&<>
-          <div style={{fontFamily:"system-ui",fontSize:80,fontWeight:700,color:K.teal,lineHeight:1,marginBottom:16,animation:"pulse 1s ease-in-out infinite"}}>{cdCount}</div>
-          <Lbl t="GET READY TO LISTEN…" s={{fontSize:12}}/>
+        {step==="slider"&&<>
+          <Lbl t={`${EARS[earIdx]==="left"?"◄ LEFT":"RIGHT ►"} EAR · ${hzFmt(freqs[freqIdx])}`} c={K.teal} sz={12} s={{marginBottom:4}}/>
+          <Lbl t="Slide down until you can barely hear the tone" s={{marginBottom:16,fontSize:13,lineHeight:1.7}}/>
+          <Big t={<>{sliderDb}<span style={{fontSize:14,color:K.sub}}> dBHL</span></>} sz={38} c={K.text} s={{marginBottom:4}}/>
+          <Lbl t={catFor(sliderDb).label} c={catFor(sliderDb).color} s={{fontSize:12,marginBottom:16}}/>
+          <div style={{width:"100%",maxWidth:320,marginBottom:8}}>
+            <input type="range" min={0} max={80} step={5} value={sliderDb}
+              onChange={e=>handleSliderChange(Number(e.target.value))}
+              style={{width:"100%",accentColor:K.teal,height:32,cursor:"pointer"}}/>
+            <div style={{display:"flex",justifyContent:"space-between",marginTop:2}}>
+              <Lbl t="0 dB" s={{fontSize:10}}/>
+              <Lbl t="80 dB" s={{fontSize:10}}/>
+            </div>
+          </div>
+          <div style={{display:"flex",gap:8,marginTop:16}}>
+            <button onClick={()=>{stopTone(); setSliderDb(0); const key=`${EARS[earIdx]}_${freqs[freqIdx]}`; const r={...results,[key]:0}; setResults(r); setTimeout(()=>advance(r),400);}}
+              style={{padding:"10px 20px",background:"rgba(255,71,87,0.1)",border:`1px solid ${K.red}`,borderRadius:7,color:K.red,fontFamily:"system-ui",fontWeight:600,fontSize:11}}>CAN'T HEAR AT ALL</button>
+            <button onClick={handleSliderSet}
+              style={{padding:"10px 28px",background:"rgba(0,212,180,0.12)",border:`1px solid ${K.teal}`,borderRadius:7,color:K.teal,fontFamily:"system-ui",fontWeight:700,fontSize:13}}>✓ SET THRESHOLD</button>
+          </div>
         </>}
 
-        {step==="playing"&&<>
-          <div style={{display:"flex",gap:6,alignItems:"flex-end",height:60,marginBottom:20}}>
+        {step==="confirm"&&<>
+          <div style={{display:"flex",gap:6,alignItems:"flex-end",height:50,marginBottom:16}}>
             {[0,1,2,3,4].map(i=>(
               <div key={i} style={{width:9,background:K.teal,borderRadius:4,opacity:0.75,
                 animation:`bar ${0.5+i*0.12}s ease-in-out infinite`,animationDelay:`${i*0.08}s`,
                 height:`${20+i*9}px`,transformOrigin:"bottom"}}/>
             ))}
           </div>
-          <Lbl t="TONE PLAYING — DID YOU HEAR IT?" c={K.text} sz={13} s={{marginBottom:20}}/>
-          <div style={{display:"flex",gap:12}}>
-            <button onClick={()=>answer(true)} style={{padding:"13px 28px",background:"rgba(0,212,180,0.1)",border:`1px solid ${K.teal}`,borderRadius:7,color:K.teal,fontFamily:"system-ui",fontWeight:600,fontSize:12}}>✓ YES, HEARD IT</button>
-            <button onClick={()=>answer(false)} style={{padding:"13px 28px",background:"rgba(255,71,87,0.1)",border:`1px solid ${K.red}`,borderRadius:7,color:K.red,fontFamily:"system-ui",fontWeight:600,fontSize:12}}>✗ DIDN'T HEAR</button>
-          </div>
+          <Lbl t="CONFIRMING…" c={K.text} sz={13} s={{marginBottom:6}}/>
+          <Lbl t={`Playing at ${confirmDb} dBHL (5 dB below your setting)`} s={{fontSize:12,lineHeight:1.7}}/>
         </>}
 
-        {step==="respond"&&<>
-          <Lbl t="DID YOU HEAR A TONE?" c={K.text} sz={14} s={{marginBottom:8}}/>
-          <Lbl t="Press YES even if very faint" s={{marginBottom:28,lineHeight:1.7}}/>
+        {step==="confirmWait"&&<>
+          <Lbl t="DID YOU HEAR THAT TONE?" c={K.text} sz={14} s={{marginBottom:6}}/>
+          <Lbl t={`Played at ${confirmDb} dBHL — 5 dB below your slider level`} s={{marginBottom:24,fontSize:12,lineHeight:1.7}}/>
           <div style={{display:"flex",gap:12}}>
-            <button onClick={()=>answer(true)} style={{padding:"16px 40px",background:"rgba(0,212,180,0.12)",border:`1px solid ${K.teal}`,borderRadius:8,color:K.teal,fontFamily:"system-ui",fontWeight:700,fontSize:15}}>✓ YES</button>
-            <button onClick={()=>answer(false)} style={{padding:"16px 40px",background:"rgba(255,71,87,0.12)",border:`1px solid ${K.red}`,borderRadius:8,color:K.red,fontFamily:"system-ui",fontWeight:700,fontSize:15}}>✗ NO</button>
+            <button onClick={()=>handleConfirmAnswer(true)} style={{padding:"16px 40px",background:"rgba(0,212,180,0.12)",border:`1px solid ${K.teal}`,borderRadius:8,color:K.teal,fontFamily:"system-ui",fontWeight:700,fontSize:15}}>✓ YES</button>
+            <button onClick={()=>handleConfirmAnswer(false)} style={{padding:"16px 40px",background:"rgba(255,71,87,0.12)",border:`1px solid ${K.red}`,borderRadius:8,color:K.red,fontFamily:"system-ui",fontWeight:700,fontSize:15}}>✗ NO</button>
           </div>
         </>}
       </>}/>
@@ -1113,12 +1096,12 @@ function HearingTest({onComplete, onSkip, calibrated}) {
         <div style={{display:"flex",gap:20}}>
           <div style={{flex:1}}>
             <Lbl t="CURRENT LEVEL" s={{marginBottom:6}}/>
-            <Big t={<>{dB}<span style={{fontSize:13}}> dBHL</span></>} sz={30} c={K.teal}/>
-            <Lbl t={catFor(dB).label+" zone"} c={catFor(dB).color} s={{marginTop:4,fontSize:13}}/>
+            <Big t={<>{step==="slider"?sliderDb:(confirmDb||sliderDb)}<span style={{fontSize:13}}> dBHL</span></>} sz={30} c={K.teal}/>
+            <Lbl t={catFor(step==="slider"?sliderDb:(confirmDb||sliderDb)).label+" zone"} c={catFor(step==="slider"?sliderDb:(confirmDb||sliderDb)).color} s={{marginTop:4,fontSize:13}}/>
           </div>
           <div style={{flex:2,borderLeft:`1px solid ${K.dim}`,paddingLeft:20}}>
             <Lbl t="HOW IT WORKS" s={{marginBottom:8}}/>
-            <Lbl t="Starting at 60 dBHL and descending 10 dB each time you hear it. When you first miss, it rises in 5 dB steps. Threshold is confirmed when you hear 2-of-3 ascending presentations at the same level. ~15% of trials are silent catch trials to verify response accuracy. This Hughson-Westlake method follows clinical ISO 8253-1 audiometry. Each ear is tested independently." s={{lineHeight:1.9,fontSize:13}}/>
+            <Lbl t="A continuous tone plays while you drag the slider down until you can barely hear it. Tap SET THRESHOLD, then we play one confirmation tone 5 dB lower. If you hear it, we record that lower level. If not, your slider level is the threshold. Quick, accurate, no bouncing." s={{lineHeight:1.9,fontSize:13}}/>
           </div>
         </div>
       }/>
