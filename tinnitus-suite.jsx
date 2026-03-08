@@ -775,9 +775,7 @@ function HearingTest({onComplete, onSkip, calibrated}) {
   const [cdCount, setCdCount] = useState(null);
   const [lastAns, setLastAns] = useState(null);
   const [earDone, setEarDone] = useState(false);
-  const [hwPhase, setHwPhase] = useState("descend"); // Hughson-Westlake: descend→ascend bracketing
-  const [levelData, setLevelData] = useState({});      // per-level approach tracking: {[dB]: {hits, approaches}}
-  const [trialCount, setTrialCount] = useState(0);     // safety cap to prevent infinite loops
+  const [hwPhase, setHwPhase] = useState("descend"); // descend until miss, then ascend until heard
   const [catchTrialsDone, setCatchTrialsDone] = useState(0);
   const [falsePositives, setFalsePositives]   = useState(0);
   const [toneActuallyPlayed, setToneActuallyPlayed] = useState(false); // gate pre-tone responses
@@ -835,7 +833,7 @@ function HearingTest({onComplete, onSkip, calibrated}) {
     // Auto-save intermediate results so a crash doesn't lose the entire test
     try { sessionStorage.setItem("ht_partial", JSON.stringify(res)); } catch(_) {}
     if (freqIdx < freqs.length-1) {
-      setFreqIdx(freqIdx+1); setDB(60); setHwPhase("descend"); setLevelData({}); setTrialCount(0); setStep("ready"); setLastAns(null);
+      setFreqIdx(freqIdx+1); setDB(60); setHwPhase("descend"); setStep("ready"); setLastAns(null);
     } else if (earIdx === 0) {
       setEarDone(true);
     } else {
@@ -860,50 +858,14 @@ function HearingTest({onComplete, onSkip, calibrated}) {
       return;
     }
 
-    // Safety cap — prevent infinite loops (max 30 presentations per frequency)
-    const newTC = trialCount + 1;
-    setTrialCount(newTC);
-    if (newTC >= 30) {
-      // Use lowest level with any ascending hit, or 110 if none
-      let bestLevel = 110;
-      for (const [lvl, data] of Object.entries(levelData)) {
-        if (data.hits > 0 && Number(lvl) < bestLevel) bestLevel = Number(lvl);
-      }
-      const r = {...results, [key]: bestLevel};
-      setResults(r); setTimeout(() => advance(r), 400);
-      return;
-    }
-
     if (heard) {
       if (hwPhase === "ascend") {
-        // ── Ascending heard: per-level approach tracking (ISO 8253-1 Hughson-Westlake) ──
-        // Each ascending "heard" at level X is one approach-hit.
-        // Threshold = lowest level with ≥2 ascending hits out of ≤3 approaches.
-        const ld = {...(levelData[dB] || {hits: 0, approaches: 0})};
-        ld.hits++; ld.approaches++;
-        const newLD = {...levelData, [dB]: ld};
-        setLevelData(newLD);
-
-        if (ld.hits >= 2) {
-          // ✓ Threshold confirmed — 2 ascending responses at this level
-          const r = {...results, [key]: dB};
-          setResults(r);
-          setTimeout(() => advance(r), 400);
-        } else if (ld.approaches >= 3 && ld.hits < 2) {
-          // ✗ Failed 2/3 at this level — abandon and continue ascending
-          const next = dB + 5;
-          if (next > 110) {
-            const r = {...results, [key]: 110};
-            setResults(r); setTimeout(() => advance(r), 400);
-          } else {
-            setDB(next); setTimeout(() => { setStep("ready"); setLastAns(null); }, 400);
-          }
-        } else {
-          // Re-descend 10 dB in DESCEND mode, then re-ascend to confirm
-          setHwPhase("descend");
-          setDB(Math.max(0, dB - 10));
-          setTimeout(() => { setStep("ready"); setLastAns(null); }, 400);
-        }
+        // ── Ascending heard = THRESHOLD FOUND ──
+        // Single-pass bracketing: first ascending "heard" is the threshold.
+        // No re-descending, no bouncing. Record and move on.
+        const r = {...results, [key]: dB};
+        setResults(r);
+        setTimeout(() => advance(r), 400);
       } else {
         // ── Descending heard: step down 10 dB ──
         if (dB <= 0) {
@@ -920,18 +882,8 @@ function HearingTest({onComplete, onSkip, calibrated}) {
       if (hwPhase === "descend") {
         // First miss during descent → switch to ascending
         setHwPhase("ascend");
-      } else {
-        // Ascending miss — if this level was previously hit, count as failed approach
-        const existing = levelData[dB];
-        if (existing && existing.hits > 0) {
-          const ld = {...existing};
-          ld.approaches++;
-          if (ld.approaches >= 3 && ld.hits < 2) {
-            // Level abandoned — will be skipped on subsequent ascents
-          }
-          setLevelData({...levelData, [dB]: ld});
-        }
       }
+      // Ascend 5 dB
       const next = dB + 5;
       if (next > 110) {
         const r = {...results, [key]: 110};
@@ -976,7 +928,7 @@ function HearingTest({onComplete, onSkip, calibrated}) {
 
   const switchEar = () => {
     setEarDone(false); setEarIdx(1); setFreqIdx(0); setDB(60); setHwPhase("descend");
-    setLevelData({}); setTrialCount(0); setStep("ready"); setLastAns(null);
+    setStep("ready"); setLastAns(null);
   };
 
   useEffect(() => () => {
