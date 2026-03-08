@@ -3508,6 +3508,9 @@ export default function App() {
   const [noiseOnly,   setNoiseOnly]   = useState(false);
   const [reactive,    setReactive]    = useState(false);
   const [prevPhase,   setPrevPhase]   = useState("intro");
+  const [therapyRunning, setTherapyRunning] = useState(false);
+  const [showLeaveWarning, setShowLeaveWarning] = useState(false);
+  const pendingNav = useRef(null);
 
   const uid = currentUser?.id;
 
@@ -3534,16 +3537,36 @@ export default function App() {
   };
 
   const goTherapy = (f, noiseType=false) => {
-    setTFreq(f); setNoiseOnly(noiseType); setPhase("therapy");
+    setTFreq(f); setNoiseOnly(noiseType); setTherapyRunning(true); setPhase("therapy");
   };
 
   const restart = () => {
+    if (therapyRunning) {
+      pendingNav.current = () => {
+        setTherapyRunning(false);
+        setPhase("intro"); setHRes(null); setTFreq(9400); setTVol(55); setTEar("both"); setNoiseOnly(false);
+        if (uid) { uDel(uid,"audiogram_latest"); uDel(uid,"freq"); }
+      };
+      setShowLeaveWarning(true);
+      return;
+    }
     setPhase("intro"); setHRes(null); setTFreq(9400); setTVol(55); setTEar("both"); setNoiseOnly(false);
     if (uid) { uDel(uid,"audiogram_latest"); uDel(uid,"freq"); }
   };
 
   const back = () => {
     if (phase === "history") { setPhase(prevPhase); return; }
+    if (phase === "therapy" || therapyRunning) {
+      pendingNav.current = () => {
+        setTherapyRunning(false);
+        const prev = {
+          therapy: noiseOnly ? "tintype" : "octavecheck",
+        };
+        if (prev[phase]) setPhase(prev[phase]);
+      };
+      setShowLeaveWarning(true);
+      return;
+    }
     const prev = {
       calibration:    "intro",
       tintype:        "intro",
@@ -3558,7 +3581,10 @@ export default function App() {
     if (prev[phase]) setPhase(prev[phase]);
   };
 
-  const goHistory = () => { setPrevPhase(phase); setPhase("history"); };
+  const goHistory = () => {
+    // Therapy stays mounted — just switch the visible phase
+    setPrevPhase(phase); setPhase("history");
+  };
 
   return (
     <div style={{minHeight:"100vh",background:K.bg,color:K.text,padding:"24px 16px max(60px,env(safe-area-inset-bottom,60px))"}}>
@@ -3656,12 +3682,43 @@ export default function App() {
               onOctaveUp={f=>goTherapy(f, false)}
               onOctaveDown={f=>goTherapy(f, false)}/>}
 
-          {phase==="therapy"    && <NoiseTherapy
-              tinnitusFreq={tFreq}
-              hearingResults={hRes}
-              noiseTypeOnly={noiseOnly}
-              reactive={reactive || (uid && uGetJ(uid, "reactive", false))}
-              userId={uid}/>}
+          {(phase==="therapy" || therapyRunning) && (
+            <div style={phase==="therapy" ? {} : {position:"absolute",left:"-9999px",pointerEvents:"none",height:0,overflow:"hidden"}}>
+              <NoiseTherapy
+                tinnitusFreq={tFreq}
+                hearingResults={hRes}
+                noiseTypeOnly={noiseOnly}
+                reactive={reactive || (uid && uGetJ(uid, "reactive", false))}
+                userId={uid}/>
+            </div>
+          )}
+
+          {/* Keep therapy alive when viewing history during a session */}
+          {/* Leave therapy warning modal */}
+          {showLeaveWarning && (
+            <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",zIndex:9999,
+              display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
+              <div style={{background:K.card,border:`1px solid ${K.amber}`,borderRadius:14,padding:28,
+                maxWidth:380,width:"100%",textAlign:"center"}}>
+                <div style={{fontSize:32,marginBottom:12}}>⚠️</div>
+                <Big t="THERAPY IS RUNNING" sz={18} c={K.amber} s={{marginBottom:10}}/>
+                <Lbl t="Leaving will stop your therapy session. The 90-second fade-out will not apply — audio will stop immediately. This may cause discomfort."
+                  s={{lineHeight:1.8,fontSize:13,marginBottom:24}}/>
+                <div style={{display:"flex",gap:10,justifyContent:"center"}}>
+                  <button onClick={()=>setShowLeaveWarning(false)}
+                    style={{padding:"12px 28px",background:"rgba(0,212,180,0.1)",border:`1px solid ${K.teal}`,
+                      borderRadius:8,color:K.teal,fontFamily:"system-ui",fontWeight:700,fontSize:14}}>
+                    KEEP THERAPY
+                  </button>
+                  <button onClick={()=>{ setShowLeaveWarning(false); if(pendingNav.current){pendingNav.current();pendingNav.current=null;} }}
+                    style={{padding:"12px 28px",background:"rgba(255,71,87,0.1)",border:`1px solid ${K.red}`,
+                      borderRadius:8,color:K.red,fontFamily:"system-ui",fontWeight:700,fontSize:14}}>
+                    STOP &amp; LEAVE
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </ErrorBoundary>
       </div>
     </div>

@@ -295,8 +295,10 @@ public class SystemNotchPlugin extends Plugin {
                 if (pm != null && !pm.isIgnoringBatteryOptimizations(ctx.getPackageName())) {
                     Intent intent = new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS);
                     intent.setData(Uri.parse("package:" + ctx.getPackageName()));
-                    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                    ctx.startActivity(intent);
+                    // Launch from the Activity (not Context) so it stays in the
+                    // same task stack — prevents Samsung from pushing the dialog
+                    // behind the WebView.
+                    getActivity().startActivity(intent);
                 }
             } catch (Exception e) {
                 Log.w(TAG, "Battery opt exemption failed", e);
