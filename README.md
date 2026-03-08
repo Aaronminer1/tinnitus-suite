@@ -47,6 +47,9 @@ No account, no subscription, no data sent anywhere. Everything runs locally in y
 | **Volume safety** | Warning banner when volume exceeds 72 dB SPL equivalent |
 | **Session tracking** | Cumulative duration tracking with daily target progress bar |
 | **Sleep timer** | Auto-fade with session auto-save |
+| **Gradual fade-out** | 90-second linear fade prevents rebound effect from abrupt sound offset |
+| **Post-session check-in** | Asks if tinnitus worsened — logs response and provides guidance |
+| **Effective volume display** | Shows true peak dB including audiogram EQ boost, with graduated warnings |
 
 ### System-Wide Streaming Notch Filter (Android)
 
@@ -69,6 +72,8 @@ No account, no subscription, no data sent anywhere. Everything runs locally in y
 | **Multi-user accounts** | Per-user profiles with independent audiograms, tone history, and sessions |
 | **History & progression** | Audiogram comparisons, tone match history, session streaks, cumulative hours |
 | **Double-notch guard** | Warns if both in-app and streaming notch are active simultaneously |
+| **Reactive tinnitus screening** | Identifies sound-sensitive users and applies conservative defaults automatically |
+| **Session settings tracking** | Records noise type, volume, notch depth, and app version with each session |
 | **PWA support** | Install as a standalone app on any device |
 | **Evidence disclaimer** | Prominent banner with links to published research |
 
@@ -175,6 +180,24 @@ See [TINNITUS_RESEARCH.md](TINNITUS_RESEARCH.md) for the research notes that inf
 
 ---
 
+## Known Side Effects & Safety
+
+Sound therapy — including TMNMT — can produce adverse effects. Users should be aware of:
+
+| Effect | Description | What the App Does |
+|---|---|---|
+| **Rebound effect** | Tinnitus may temporarily seem louder immediately after therapy stops | 90-second gradual fade-out prevents abrupt offset |
+| **Residual excitation** | In rare cases, sound exposure temporarily *increases* tinnitus | Post-session check-in prompts users to report worsening |
+| **New/changed tones** | ~32% of participants in one NMT study reported transient new tones | Session tracking + guidance to reduce settings or stop |
+| **Reactive tinnitus worsening** | Sound-sensitive subtypes may worsen with aggressive therapy | Reactive screening + conservative defaults (lower vol, shorter sessions) |
+| **Volume-related damage** | Audiogram EQ can add up to +18 dB above slider level | Effective peak dB display + graduated warnings at 65/72 dB |
+
+**If your tinnitus consistently worsens after sessions, stop using sound therapy and consult an audiologist.**
+
+See [TINNITUS_RESEARCH.md](TINNITUS_RESEARCH.md#65--known-adverse-reactions--contraindications) for full adverse reaction data and references.
+
+---
+
 ## Requirements & browser support
 
 | Browser | Status |
@@ -225,3 +248,5 @@ MIT — free to use, modify, and distribute.
 - The authors and contributors accept **no liability** for any harm, hearing damage, or adverse effects arising from use of this software
 - **Do not use headphone volumes that cause discomfort** — stop immediately if you experience pain or worsening symptoms
 - Always consult a **qualified audiologist or ENT specialist** for professional hearing assessment and tinnitus management
+
+**Known adverse effects:** Sound therapy, including the notched sound techniques implemented in this app, has been documented to cause temporary increases in tinnitus loudness (rebound effect), new or changed tinnitus tones, and residual excitation in a subset of users. Approximately 32% of participants in one NMT study reported adverse reactions. Users with reactive tinnitus or hyperacusis are at elevated risk. See the [Known Side Effects & Safety](#known-side-effects--safety) section and [TINNITUS_RESEARCH.md](TINNITUS_RESEARCH.md) for details and references.

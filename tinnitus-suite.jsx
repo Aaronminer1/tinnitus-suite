@@ -52,9 +52,11 @@ const CATS = [
   {max:130, label:"Profound",    color:"#a29bfe"},
 ];
 
+const APP_VERSION = "1.1.0";
+
 const NOISE_TYPES = [
   {id:"music",   label:"Notched Music ★",desc:"Upload your music — strongest evidence (Okamoto 2010)", color:"#ffd32a",rec:true},
-  {id:"notched", label:"Notched White",   desc:"Therapeutic — silence at tinnitus frequency",            color:"#00d4b4",rec:false},
+  {id:"notched", label:"Notched White",   desc:"Research-based — silence at tinnitus frequency",            color:"#00d4b4",rec:false},
   {id:"white",   label:"White Noise",     desc:"Equal energy across all frequencies",                    color:"#e2e8f0",rec:false},
   {id:"pink",    label:"Pink Noise",      desc:"Softer highs, sounds more natural",                     color:"#fd79a8",rec:false},
   {id:"brown",   label:"Brown Noise",     desc:"Deep rumble, like rain on a rooftop",                   color:"#e17055",rec:false},
@@ -534,6 +536,9 @@ function Disclaimer({onAccept}) {
               "The authors accept NO liability for any harm, hearing damage, or adverse effects from use of this software",
               "Stop immediately if you experience pain, discomfort, or worsening symptoms",
               "Always consult a qualified audiologist or ENT specialist for professional hearing care",
+              "Sound therapy, including the notched noise therapy implemented in this app, can cause temporary changes in your tinnitus — including new tones, louder tinnitus, or changed pitch. These effects are documented in the clinical literature and occur in a significant percentage of users",
+              "By continuing, you accept full responsibility for monitoring your own response to this software and for discontinuing use if you experience any adverse changes in your hearing or tinnitus",
+              "The developer(s) of this software have no medical training and are not qualified to provide hearing healthcare advice",
             ].map((t,i) => (
               <div key={i} style={{display:"flex",gap:10,alignItems:"flex-start"}}>
                 <span style={{color:K.amber,flexShrink:0,marginTop:2}}>▸</span>
@@ -969,6 +974,12 @@ function HearingTest({onComplete, onSkip, calibrated}) {
           <Lbl t="CHOOSE TEST RESOLUTION" s={{textAlign:"center",marginTop:5,fontSize:14}}/>
         </div>
         <Lbl t="Use headphones or earbuds in a quiet room. Each mode tests both ears." s={{textAlign:"center",marginBottom:16,fontSize:13}}/>
+        {/* Headphone safety warning (Section 9.2-A) */}
+        <Panel s={{marginBottom:14, borderColor:K.amber+"33"}} ch={<>
+          <Lbl t="⚠ HEADPHONE SAFETY" c={K.amber} s={{marginBottom:6}}/>
+          <Lbl t="This test presents tones at various volumes through your headphones. If you experience any pain or discomfort at any point, remove your headphones immediately and stop the test. Do not adjust your system volume during the test — this was set during calibration."
+            s={{lineHeight:1.8, fontSize:13}}/>
+        </>}/>
         {TEST_MODES.map(m=>{
           const FMIN=200, FMAX=16000;
           const logP = f => Math.log2(f/FMIN)/Math.log2(FMAX/FMIN)*100;
@@ -1868,7 +1879,7 @@ function ToneFinder({hearingResults, userId, onComplete}) {
 }
 
 // ─── Noise Therapy ────────────────────────────────────────────────────────────
-function NoiseTherapy({tinnitusFreq:initF, hearingResults, noiseTypeOnly, userId}) {
+function NoiseTherapy({tinnitusFreq:initF, hearingResults, noiseTypeOnly, reactive, userId}) {
   const {f2s, s2f, SMAX} = logSlider(500, 20000);
 
   // Hearing-calibrated initial volume = threshold at tinnitus freq + 5 dB (just audible)
@@ -1885,14 +1896,42 @@ function NoiseTherapy({tinnitusFreq:initF, hearingResults, noiseTypeOnly, userId
     return high-low > 20 ? "pink" : null;
   })();
 
+  // ── Conservative mode initialization (Sections 2.2/4.1) ──
+  // Priority: reactive > first-session > standard
+  const _initSessions = uGetJ(userId||"__guest","sessions",[]);
+  const _isFirstSession = _initSessions.length === 0;
+  const _conservativeMode = reactive ? "reactive" : _isFirstSession ? "first" : "standard";
+
   const [playing,  setPlaying]  = useState(false);
-  // Default noise type: for sloping loss without tonal tinnitus, start on pink (gentler on damaged hair cells)
-  const [nType,    setNType]    = useState(noiseTypeOnly ? (slopeRec||"white") : "notched");
-  const [vol,      setVol]      = useState(initVol); // threshold-calibrated start
-  const [sessMins, setSessMins] = useState(60);
+  // Default noise type: reactive→pink (less HF energy), first-session→standard, normal→notched
+  const [nType,    setNType]    = useState(
+    noiseTypeOnly ? (slopeRec||"white")
+    : _conservativeMode === "reactive" ? "pink"
+    : "notched"
+  );
+  const [vol,      setVol]      = useState(() => {
+    // Apply safety cap based on conservative mode
+    if (_conservativeMode === "reactive") return Math.min(initVol, 40);
+    if (_conservativeMode === "first")    return Math.min(initVol, 50);
+    return initVol;
+  });
+  const [sessMins, setSessMins] = useState(
+    _conservativeMode === "reactive" ? 20 :
+    _conservativeMode === "first"    ? 30 : 60
+  );
   const [elapsed,  setElapsed]  = useState(0);
   const [dispF,    setDispF]    = useState(initF);
   const [showBimodal, setShowBimodal] = useState(false);
+
+  // ── Gradual fade-out state (Section 1.2 — anti-rebound) ──
+  const [fading, setFading] = useState(false);
+  const [fadeRemaining, setFadeRemaining] = useState(0);
+  const fadingRef = useRef(false);
+  const fadeIntervalR = useRef(null);
+
+  // ── Post-session check-in state (Section 2.1) ──
+  const [showCheckIn, setShowCheckIn] = useState(false);
+  const [checkInIssue, setCheckInIssue] = useState(null);
 
   // ── System-wide notch state (applies to Pandora/Spotify/YouTube/etc.) ──
   const [sysNotchAvail,   setSysNotchAvail]   = useState(false);
@@ -2036,7 +2075,7 @@ function NoiseTherapy({tinnitusFreq:initF, hearingResults, noiseTypeOnly, userId
 
   // ERB-scaled notch width — auto-calculated, no user guess needed
   // Capped at 40 dB: published TMNMT research used 12–20 dB. Beyond 40 dB causes biquad ringing.
-  const [nDepth,   setNDepth]   = useState(30);
+  const [nDepth,   setNDepth]   = useState(15);
 
   // Keep system notch in sync with frequency / depth / noise color changes
   useEffect(() => {
@@ -2086,7 +2125,7 @@ function NoiseTherapy({tinnitusFreq:initF, hearingResults, noiseTypeOnly, userId
   const playRef = useRef(false); playRef.current = playing;
   const ntRef   = useRef(noiseTypeOnly ? "white" : "notched"); ntRef.current = nType;
   const volRef  = useRef(initVol); volRef.current = vol;
-  const ndRef   = useRef(30); ndRef.current = nDepth;
+  const ndRef   = useRef(15); ndRef.current = nDepth;
 
   const slRef    = useRef(null);
   const canRef   = useRef(null);
@@ -2421,24 +2460,94 @@ function NoiseTherapy({tinnitusFreq:initF, hearingResults, noiseTypeOnly, userId
     }
   };
 
-  const stop = () => {
-    stopAudio();
-    clearInterval(timerR.current);
-    clearTimeout(sleepR.current);
-    cancelAnimationFrame(animR.current);
-    // Save session if it ran for > 30 s
+  // ── Session save helper (Section 5.1) ──
+  const saveSession = () => {
     const dur = elapsedRef.current;
     if (dur > 30) {
       try {
-        const _uid  = userId||"__guest";
-        const saved = uGetJ(_uid,"sessions",[]);
-        saved.push({ date: new Date().toISOString(), duration: dur, frequency: tfRef.current });
+        const _uid = userId || "__guest";
+        const saved = uGetJ(_uid, "sessions", []);
+        saved.push({
+          date: new Date().toISOString(),
+          duration: dur,
+          frequency: tfRef.current,
+          noiseType: ntRef.current,
+          volume: volRef.current,
+          notchDepth: ndRef.current,
+          disclaimerAccepted: true,
+          reactiveWarning: reactive || false,
+          appVersion: APP_VERSION,
+        });
         if (saved.length > 200) saved.splice(0, saved.length - 200);
-        uSetJ(_uid,"sessions",saved);
+        uSetJ(_uid, "sessions", saved);
         setSessions([...saved]);
-      } catch(_) {}
+
+        // Show post-session check-in for first 5 sessions or if user was flagged "unsure"
+        const unsure = userId && uGetJ(userId, "reactivity_unsure", false);
+        if (saved.length <= 5 || unsure) {
+          setShowCheckIn(true);
+        }
+      } catch (_) {}
     }
-    setPlaying(false);
+  };
+
+  const stop = (immediate = false) => {
+    // If already fading, don't restart
+    if (fadingRef.current && !immediate) return;
+
+    if (immediate) {
+      // Immediate stop (for cleanup/unmount only)
+      clearInterval(fadeIntervalR.current);
+      fadingRef.current = false;
+      setFading(false);
+      setFadeRemaining(0);
+      stopAudio();
+      clearInterval(timerR.current);
+      clearTimeout(sleepR.current);
+      cancelAnimationFrame(animR.current);
+      saveSession();
+      setPlaying(false);
+      return;
+    }
+
+    // Gradual fade over 90 seconds — LINEAR IN GAIN SPACE (not dB)
+    // dBtoG is logarithmic; linear-in-dB would front-load the perceived fade.
+    // Linear-in-gain produces a perceptually smooth fade.
+    fadingRef.current = true;
+    setFading(true);
+    const fadeDuration = 90; // seconds
+    const startGain = dBtoG(volRef.current); // Capture current gain value
+    const fadeStart = Date.now();
+
+    const fadeInterval = setInterval(() => {
+      const elapsed = (Date.now() - fadeStart) / 1000;
+      const progress = Math.min(elapsed / fadeDuration, 1);
+      // Linear interpolation in gain space → perceptually smooth fade
+      const currentGain = startGain * (1 - progress);
+
+      if (gainR.current && ac.current) {
+        gainR.current.gain.setTargetAtTime(
+          currentGain, ac.current.currentTime, 0.1
+        );
+      }
+
+      setFadeRemaining(Math.ceil(fadeDuration - elapsed));
+
+      if (progress >= 1) {
+        clearInterval(fadeInterval);
+        fadingRef.current = false;
+        setFading(false);
+        setFadeRemaining(0);
+        stopAudio();
+        clearInterval(timerR.current);
+        cancelAnimationFrame(animR.current);
+        saveSession();
+        setPlaying(false);
+      }
+    }, 1000);
+
+    // Store interval ref so it can be cancelled if user force-stops
+    fadeIntervalR.current = fadeInterval;
   };
 
   const startPlaying = (tf) => {
@@ -2455,10 +2564,8 @@ function NoiseTherapy({tinnitusFreq:initF, hearingResults, noiseTypeOnly, userId
     clearTimeout(sleepR.current);
     if (sleepMins > 0) {
       sleepR.current = setTimeout(() => {
-        if (gainR.current && ac.current) {
-          try { gainR.current.gain.linearRampToValueAtTime(0, ac.current.currentTime + 4); } catch(_){}
-        }
-        setTimeout(() => { stop(); setSleepEnded(true); }, 4200);
+        stop(); // Uses the gradual 90-second fade (Section 1.2b)
+        setSleepEnded(true);
       }, sleepMins * 60 * 1000);
     }
     drawCanvas(); setPlaying(true);
@@ -2517,7 +2624,7 @@ function NoiseTherapy({tinnitusFreq:initF, hearingResults, noiseTypeOnly, userId
   },[]);
 
   useEffect(()=>()=>{
-    clearInterval(timerR.current); cancelAnimationFrame(animR.current); clearTimeout(debR.current); clearTimeout(sleepR.current);
+    clearInterval(timerR.current); clearInterval(fadeIntervalR.current); cancelAnimationFrame(animR.current); clearTimeout(debR.current); clearTimeout(sleepR.current);
     bufCache.current = {}; // invalidate buffers — they belong to the old AudioContext
     try{srcR.current&&srcR.current.stop();}catch(_){}
     try{ac.current&&ac.current.close();}catch(_){}
@@ -2544,13 +2651,76 @@ function NoiseTherapy({tinnitusFreq:initF, hearingResults, noiseTypeOnly, userId
     return count;
   })();
 
+  // Calculate peak EQ boost from hearing results (Section 1.3)
+  const peakEQBoost = (() => {
+    if (!hearingResults) return 0;
+    const freqs = resFreqs(hearingResults).filter(f => f >= 250 && f <= 12000);
+    let maxBoost = 0;
+    for (const f of freqs) {
+      const l = hearingResults[`left_${f}`] || 0;
+      const r = hearingResults[`right_${f}`] || 0;
+      const avg = (l + r) / 2;
+      if (avg >= 10) {
+        maxBoost = Math.max(maxBoost, Math.min(18, avg * 0.5));
+      }
+    }
+    return Math.round(maxBoost);
+  })();
+
+  // Conservative mode (Section 4.1 + 2.2 step 7)
+  const isFirstSession = sessions.length === 0;
+  const conservativeMode = reactive ? "reactive" : isFirstSession ? "first" : "standard";
+
   return (
     <div style={{animation:"up 0.3s ease"}}>
-      {/* ── Evidence disclaimer banner (Critique recommendation #5) ── */}
+      {/* ── Post-session check-in (Section 2.1) ── */}
+      {showCheckIn && !checkInIssue && (
+        <PostSessionCheckIn
+          onDismiss={() => setShowCheckIn(false)}
+          onReportIssue={(issue) => { setCheckInIssue(issue); }}
+        />
+      )}
+      {checkInIssue && (
+        <SessionIssueGuidance
+          issue={checkInIssue}
+          onDismiss={() => { setCheckInIssue(null); setShowCheckIn(false); }}
+        />
+      )}
+
+      {/* ── Reactive tinnitus banner (Section 2.2 step 8) ── */}
+      {reactive && (
+        <Panel s={{marginBottom:14, borderColor:K.amber+"88"}} ch={<>
+          <Lbl t="⚠ REACTIVE TINNITUS — CONSERVATIVE MODE" c={K.amber} s={{marginBottom:6}}/>
+          <Lbl t="Your sound sensitivity profile has been flagged. Volume and duration are set lower than standard. If your tinnitus spikes during or after a session, stop immediately and consult an audiologist before continuing. This app is not a substitute for professional tinnitus management."
+            s={{lineHeight:1.8, fontSize:13}}/>
+        </>}/>
+      )}
+
+      {/* ── First-session conservative panel (Section 4.1) ── */}
+      {conservativeMode === "first" && (
+        <Panel s={{marginBottom:14, borderColor:K.teal+"55"}} ch={<>
+          <Lbl t="FIRST SESSION — CONSERVATIVE SETTINGS APPLIED" c={K.teal} s={{marginBottom:8}}/>
+          <Lbl t="For your first session, we've set volume lower and duration shorter than the clinical protocol recommends. This lets you assess how your tinnitus responds before committing to longer sessions. Increase gradually over your first week if everything feels fine."
+            s={{lineHeight:1.9, fontSize:13}}/>
+        </>}/>
+      )}
+
+      {/* ── Pre-play risk acknowledgment (Section 9.2-B) ── */}
+      {!playing && elapsed === 0 && !fading && (
+        <Panel s={{marginBottom:14, borderColor:K.amber+"44"}} ch={<>
+          <Lbl t="⚠ BEFORE YOU START" c={K.amber} s={{marginBottom:8}}/>
+          <Lbl t="This software generates audio directed at your ears for extended periods. By pressing play, you acknowledge:"
+            s={{lineHeight:1.8, fontSize:14, marginBottom:10}}/>
+          <Lbl t={"▸ You use this at your own risk — this is not a medical device and has not been evaluated by any regulatory body\n▸ Sound therapy can cause temporary changes in tinnitus perception, including new tones or louder tinnitus after sessions\n▸ You are responsible for setting a safe volume — keep it below your tinnitus loudness\n▸ Start with short sessions (20–30 min) and increase gradually\n▸ Stop immediately if you experience pain, discomfort, or worsening symptoms\n▸ Consult a qualified audiologist if you have concerns about your hearing"}
+            s={{lineHeight:2.0, fontSize:13, whiteSpace:"pre-line"}}/>
+        </>}/>
+      )}
+
+      {/* ── Evidence disclaimer banner (Section 3.1 — strengthened) ── */}
       {!noiseTypeOnly && (
-        <div style={{marginBottom:14,padding:"10px 14px",background:"rgba(255,165,2,0.05)",border:`1px solid ${K.amber}44`,borderRadius:8,display:"flex",gap:10,alignItems:"flex-start"}}>
+        <div style={{marginBottom:14,padding:"10px 14px",background:"rgba(255,165,2,0.05)",border:`1px solid ${K.amber}66`,borderRadius:8,display:"flex",gap:10,alignItems:"flex-start"}}>
           <span style={{color:K.amber,fontSize:16,flexShrink:0,marginTop:1}}>⚠</span>
-          <Lbl t="TMNMT evidence is preliminary. The original Okamoto 2010 study had only 8 participants per group. A 2025 meta-analysis of 14 RCTs found modest benefit at 3 months (–8.6 THI points) and stronger effects at 6 months (–24.6 points), but not all studies show benefit vs. unnotched sound. This app is a simplified implementation — not a substitute for clinical care." s={{lineHeight:1.7,fontSize:12,color:K.amber}}/>
+          <Lbl t="EVIDENCE STATUS: TMNMT research is preliminary and results are mixed. The original Okamoto 2010 study had only 8 participants per group. A 2025 meta-analysis of NMT vs conventional music therapy found modest benefit at 3 months (–8.6 THI points) and stronger effects at 6 months (–24.6 points), but a separate meta-analysis of 5 THI studies found no statistically significant effect. One study reported adverse reactions in ~32% of participants, including changes in tinnitus sound and additional sounds. This is a self-directed implementation — not a substitute for clinical care. If your symptoms worsen, stop and consult an audiologist." s={{lineHeight:1.7,fontSize:12,color:K.amber}}/>
         </div>
       )}
 
@@ -2605,10 +2775,28 @@ function NoiseTherapy({tinnitusFreq:initF, hearingResults, noiseTypeOnly, userId
 
       <Panel s={{marginBottom:14}} ch={
         <div style={{display:"flex",alignItems:"center",gap:20}}>
-          <button onClick={()=>playing?stop():startPlaying()} style={{width:74,height:74,borderRadius:"50%",flexShrink:0,fontSize:26,position:"relative",background:playing?"rgba(0,212,180,0.12)":"rgba(0,212,180,0.05)",border:`2px solid ${playing?K.teal:K.border}`,color:playing?K.teal:K.muted,animation:playing?"glow 2.5s ease-in-out infinite":"none",transition:"all 0.2s"}}>
-            {playing?"⏹":"▶"}
-            {playing&&<div style={{position:"absolute",inset:-9,borderRadius:"50%",border:`1px solid ${K.teal}`,animation:"ring 2s ease-out infinite",pointerEvents:"none"}}/>}
-          </button>
+          <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:6}}>
+            <button onClick={()=>{
+              if (fading) return; // during fade, use STOP NOW
+              playing ? stop() : startPlaying();
+            }} style={{width:74,height:74,borderRadius:"50%",flexShrink:0,fontSize:26,position:"relative",background:playing?"rgba(0,212,180,0.12)":"rgba(0,212,180,0.05)",border:`2px solid ${playing?K.teal:K.border}`,color:playing?K.teal:K.muted,animation:playing&&!fading?"glow 2.5s ease-in-out infinite":"none",transition:"all 0.2s",opacity:fading?0.5:1}}>
+              {playing?"⏹":"▶"}
+              {playing&&!fading&&<div style={{position:"absolute",inset:-9,borderRadius:"50%",border:`1px solid ${K.teal}`,animation:"ring 2s ease-out infinite",pointerEvents:"none"}}/>}
+            </button>
+            {/* Fade-out UI (Section 1.2) */}
+            {fading && (
+              <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:4}}>
+                <Lbl t={`FADING… ${fadeRemaining}s`} c={K.amber} s={{animation:"pulse 2s infinite", fontSize:11}}/>
+                <button onClick={() => stop(true)} style={{
+                  padding:"4px 10px", background:"transparent",
+                  border:`1px solid ${K.muted}`, borderRadius:4,
+                  color:K.muted, fontFamily:"system-ui", fontSize:10, cursor:"pointer"
+                }}>
+                  STOP NOW
+                </button>
+              </div>
+            )}
+          </div>
           <div style={{flex:1}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:8}}>
               <span style={{fontFamily:"system-ui",fontSize:28,fontWeight:700,color:playing?K.teal:K.muted,animation:playing?"pulse 3s ease-in-out infinite":"none"}}>
@@ -2649,6 +2837,10 @@ function NoiseTherapy({tinnitusFreq:initF, hearingResults, noiseTypeOnly, userId
           </div>
         </div>
       }/>
+
+      {/* ── Abrupt stopping warning (Section 2.3) ── */}
+      <Lbl t="▸ When finished, use the fade-out to end your session gradually — abruptly stopping sound therapy can cause a temporary rebound where tinnitus sounds louder or different. This is a normal auditory response, not damage."
+        s={{marginTop:-8, marginBottom:14, lineHeight:1.8, fontSize:12, color:K.sub}}/>
 
       <Panel s={{marginBottom:14}} ch={<>
         <Lbl t="SOUND SOURCE" s={{marginBottom:10}}/>
@@ -2699,6 +2891,22 @@ function NoiseTherapy({tinnitusFreq:initF, hearingResults, noiseTypeOnly, userId
             </button>
           ))}
         </div>
+        {/* White noise energy warning (Section 4.2) */}
+        {nType === "white" && (
+          <div style={{marginTop:8, padding:"7px 10px", background:"rgba(255,165,2,0.05)",
+            border:"1px solid rgba(255,165,2,0.2)", borderRadius:6}}>
+            <Lbl t="White noise delivers equal energy across all frequencies, including high frequencies where hearing damage and tinnitus are most common. If you have high-frequency hearing loss, consider pink noise (softer highs) or music as a carrier instead."
+              s={{fontSize:12, lineHeight:1.7, color:K.amber}}/>
+          </div>
+        )}
+        {/* Reactive user override warning (Section N.2) */}
+        {reactive && (nType === "notched" || nType === "white") && (
+          <div style={{marginTop:6, padding:"6px 10px", background:"rgba(255,165,2,0.06)",
+            border:"1px solid rgba(255,165,2,0.2)", borderRadius:6}}>
+            <Lbl t="⚠ You were flagged for sound sensitivity. Notched/white noise delivers more high-frequency energy than pink noise. Monitor your response carefully."
+              s={{fontSize:11, lineHeight:1.6, color:K.amber}}/>
+          </div>
+        )}
       </>}/>
 
       {/* ── System-wide streaming notch (Pandora/Spotify/YouTube/etc.) ── */}
@@ -2829,6 +3037,9 @@ function NoiseTherapy({tinnitusFreq:initF, hearingResults, noiseTypeOnly, userId
                   <Lbl t="Some devices restrict system-wide audio effects. Use the in-app music upload as an alternative." s={{fontSize:11,color:K.sub,marginTop:4}}/>
                 </div>
               )}
+              {/* Streaming notch fade-out limitation (Section N.1) */}
+              <Lbl t="⚠ The streaming notch filter stops immediately when disabled — the gradual fade-out only applies to in-app therapy audio. If you notice rebound effects after disabling, try lowering the system volume gradually before turning off the notch."
+                s={{fontSize:11, lineHeight:1.7, color:K.amber, marginTop:6}}/>
             </>
           ) : (
             <div style={{padding:"8px 12px",background:K.dim,borderRadius:6}}>
@@ -2842,10 +3053,20 @@ function NoiseTherapy({tinnitusFreq:initF, hearingResults, noiseTypeOnly, userId
         <Panel ch={<>
           <Lbl t="VOLUME" s={{marginBottom:6}}/>
           <Big t={`${vol} dB`} sz={26} c="#a29bfe" s={{marginBottom:10}}/>
-          <SldC val={vol} min={5} max={80} step={1} cls="sl-purple" color="#a29bfe" onCh={setVol}/>
-          {vol > 72 && (
-            <div style={{marginTop:6,padding:"6px 8px",background:"rgba(255,71,87,0.08)",border:"1px solid rgba(255,71,87,0.3)",borderRadius:5}}>
-              <Lbl t="⚠ HIGH VOLUME — risk of over-masking. You should still hear your tinnitus faintly. Over-masking prevents habituation, the core therapeutic mechanism." s={{fontSize:11,lineHeight:1.6,color:K.red}}/>
+          <SldC val={vol} min={5} max={75} step={1} cls="sl-purple" color="#a29bfe" onCh={setVol}/>
+          {peakEQBoost > 0 && (
+            <Lbl t={`Audiogram EQ adds up to +${peakEQBoost} dB at your loss frequencies → effective peak: ~${vol + peakEQBoost} dB`}
+              s={{marginTop:4, fontSize:11, lineHeight:1.6, color: (vol + peakEQBoost) > 72 ? K.red : K.sub}}/>
+          )}
+          {(vol + peakEQBoost) > 65 && (
+            <div style={{marginTop:6, padding:"8px 10px",
+              background: (vol + peakEQBoost) > 72 ? "rgba(255,71,87,0.12)" : "rgba(255,165,2,0.08)",
+              border:`1px solid ${(vol + peakEQBoost) > 72 ? "rgba(255,71,87,0.4)" : "rgba(255,165,2,0.3)"}`,
+              borderRadius:5}}>
+              <Lbl t={(vol + peakEQBoost) > 72
+                ? `⚠ DANGEROUS VOLUME — Effective peak with audiogram EQ: ~${vol + peakEQBoost} dB. Risk of hearing damage and worsening tinnitus. Clinical studies used moderate, comfortable volumes. You should still hear your tinnitus faintly beneath the therapy sound. The developer accepts no liability for hearing damage caused by excessive volume.`
+                : `⚠ ELEVATED VOLUME — Effective level: ~${vol + peakEQBoost} dB (includes audiogram EQ boost). Clinical TMNMT studies used comfortable listening levels. Louder is not more effective. Keep volume below the level where your tinnitus is fully masked.`
+              } s={{fontSize:11, lineHeight:1.7, color: (vol + peakEQBoost) > 72 ? K.red : K.amber}}/>
             </div>
           )}
           <Lbl t="▸ Set BELOW tinnitus loudness — do not mask it. Masking prevents habituation. You should still be able to hear your tinnitus faintly beneath the noise." s={{marginTop:8,lineHeight:1.8,fontSize:13,color:K.amber}}/>
@@ -2856,8 +3077,11 @@ function NoiseTherapy({tinnitusFreq:initF, hearingResults, noiseTypeOnly, userId
             <Big t={<>–{nDepth} <span style={{fontSize:14}}>dB</span></>} sz={26} c="#4ade80" s={{marginBottom:10}}/>
             <SldC val={nDepth} min={10} max={40} step={5} cls="sl-teal" color="#4ade80" onCh={setNDepth}/>
             <Lbl t="1-octave width per Okamoto et al. (2010 PNAS). Published studies used 12–20 dB depth." s={{marginTop:8,lineHeight:1.8,fontSize:13}}/>
-            {nDepth > 30 && (
-              <Lbl t="⚠ Deep notch (>30 dB) can cause audible ringing artifacts. Published TMNMT studies used 12–20 dB." s={{marginTop:4,fontSize:12,lineHeight:1.6,color:K.amber}}/>
+            {nDepth > 20 && (
+              <Lbl t={nDepth > 30
+                ? "⚠ NOTCH DEPTH EXCEEDS STUDIED RANGE — Published TMNMT research used 12–20 dB. Depths above 30 dB can cause audible ringing artifacts and may worsen tinnitus. Use at your own risk."
+                : "⚠ Above the range used in published TMNMT studies (12–20 dB). Higher depth has not been shown to improve outcomes."
+              } s={{marginTop:4,fontSize:12,lineHeight:1.6,color:K.amber}}/>
             )}
             <Lbl t={`Notch: ${hzFmt(Math.round(dispF/Math.SQRT2))} – ${hzFmt(Math.round(dispF*Math.SQRT2))}`} c={K.teal} s={{fontSize:12,marginTop:4}}/>
           </>}/>
@@ -2897,10 +3121,11 @@ function NoiseTherapy({tinnitusFreq:initF, hearingResults, noiseTypeOnly, userId
           <Lbl t="Broadband noise reduces the perceived signal-to-noise ratio of your tinnitus, providing relief without requiring a frequency match. It also reduces stress and helps with sleep. Unlike masking, setting the volume below tinnitus level allows the brain to habituate over time." s={{lineHeight:1.9,fontSize:13}}/>
         ) : (
           <Lbl t={<>
-            By removing sound energy at <span style={{color:K.red}}>{hzFmt(dispF)}</span>, lateral inhibition is triggered in adjacent auditory neurons, gradually suppressing the hyperactive cells causing your tinnitus (TMNMT — tailor-made notched noise therapy).<br/><br/>
+            By removing sound energy at <span style={{color:K.red}}>{hzFmt(dispF)}</span>, lateral inhibition is triggered in adjacent auditory neurons, gradually suppressing the hyperactive cells causing your tinnitus (TMNMT — tailor-made notched noise therapy). This is the proposed mechanism — individual results vary and not all studies confirm benefit beyond standard sound therapy.<br/><br/>
             ▸ Evidence: A 2025 meta-analysis of 14 RCTs found significant improvement at 3 months (–8.6 THI points) and 6 months (–24.6 THI points) — effects strengthen with time<br/>
             ▸ Works best for tonal (not noise-type) tinnitus<br/>
             ▸ Not all studies show benefit vs. unnotched sound — some people respond, others don't<br/>
+            ▸ One NMT study reported adverse reactions in ~32% of participants<br/>
             ▸ Recommended: 60–120 min daily for 3–6+ months
           </>} s={{lineHeight:1.9,fontSize:13}}/>
         )}
@@ -2983,6 +3208,27 @@ function NoiseTherapy({tinnitusFreq:initF, hearingResults, noiseTypeOnly, userId
           </div>
         )}
       </>}/>
+
+      {/* ── Feedback channel (Section 4.4) ── */}
+      <Panel s={{marginBottom:14, borderColor:K.dim}} ch={<>
+        <Lbl t="EXPERIENCING UNEXPECTED EFFECTS?" s={{marginBottom:6}}/>
+        <Lbl t="If you notice new tones, worsening tinnitus, or discomfort after using this app, please reduce volume and session duration first. If problems persist, stop using the app and consult your doctor."
+          s={{lineHeight:1.8, fontSize:13, marginBottom:10}}/>
+        <Lbl t="Questions or feedback:" s={{fontSize:12, marginBottom:4}}/>
+        <a href="https://github.com/Aaronminer1/tinnitus-suite/issues"
+          target="_blank" rel="noopener noreferrer"
+          style={{color:K.teal, fontSize:12, fontFamily:"system-ui", display:"block"}}>
+          github.com/Aaronminer1/tinnitus-suite/issues
+        </a>
+      </>}/>
+
+      {/* ── Persistent footer disclaimer (Section 9.3) ── */}
+      <div style={{marginTop:20, padding:"12px 16px", borderTop:`1px solid ${K.dim}`, textAlign:"center"}}>
+        <Lbl t="EXPERIMENTAL SOFTWARE — NOT A MEDICAL DEVICE — USE AT YOUR OWN RISK"
+          c={K.muted} s={{fontSize:10, letterSpacing:"0.14em", marginBottom:4}}/>
+        <Lbl t="Not approved by FDA, CE, or any regulatory body. Not intended to diagnose, treat, cure, or prevent any condition. The developer accepts no liability for adverse effects. Consult a qualified audiologist for professional hearing care."
+          c={K.muted} s={{fontSize:10, lineHeight:1.7, opacity:0.6}}/>
+      </div>
     </div>
   );
 }
@@ -3075,6 +3321,164 @@ function NavBar({phase, currentUser, onBack, onRestart, onHistory, onSwitchUser}
   );
 }
 
+// ─── Reactive Tinnitus Screening (Section 2.2) ──────────────────────────────
+function ReactivityScreen({onContinue, onUnsure, onReactiveWarning}) {
+  return (
+    <div style={{animation:"up 0.3s ease"}}>
+      <div style={{textAlign:"center", marginBottom:24}}>
+        <Big t="SOUND SENSITIVITY CHECK" sz={22}/>
+        <Lbl t="ONE MORE QUESTION BEFORE WE START"
+          s={{textAlign:"center", marginTop:6, fontSize:13}}/>
+      </div>
+
+      <Panel s={{marginBottom:14}} ch={<>
+        <Lbl t="Does your tinnitus temporarily get louder or change pitch after exposure to everyday sounds (conversations, music, traffic, dishes clinking)?"
+          s={{lineHeight:1.9, fontSize:15, marginBottom:16}}/>
+
+        <div style={{display:"flex", flexDirection:"column", gap:10}}>
+          <button onClick={onContinue} style={{
+            padding:"14px 20px", background:"rgba(0,212,180,0.06)",
+            border:`1px solid ${K.teal}`, borderRadius:8,
+            color:K.teal, fontFamily:"system-ui", fontWeight:600, fontSize:14,
+            textAlign:"left", cursor:"pointer"
+          }}>
+            NO — my tinnitus stays roughly the same regardless of sound exposure
+          </button>
+
+          <button onClick={onReactiveWarning} style={{
+            padding:"14px 20px", background:"rgba(255,165,2,0.06)",
+            border:`1px solid ${K.amber}`, borderRadius:8,
+            color:K.amber, fontFamily:"system-ui", fontWeight:600, fontSize:14,
+            textAlign:"left", cursor:"pointer"
+          }}>
+            YES — sounds sometimes make my tinnitus spike or change
+          </button>
+
+          <button onClick={onUnsure} style={{
+            padding:"14px 20px", background:"transparent",
+            border:`1px solid ${K.border}`, borderRadius:8,
+            color:K.muted, fontFamily:"system-ui", fontWeight:500, fontSize:14,
+            textAlign:"left", cursor:"pointer"
+          }}>
+            NOT SURE — I haven't noticed a pattern
+          </button>
+        </div>
+      </>}/>
+
+      <Panel s={{borderColor:K.dim}} ch={<>
+        <Lbl t="WHY WE ASK" c={K.sub} s={{marginBottom:6}}/>
+        <Lbl t="Some people have tinnitus that reacts to sound exposure — a subtype called reactive tinnitus. For these users, sound therapy needs to start at lower intensity. If you're not sure, we'll monitor your response more closely during your first sessions."
+          s={{lineHeight:1.8, fontSize:12}}/>
+      </>}/>
+    </div>
+  );
+}
+
+function ReactiveWarning({onContinueCautious, onGoBack}) {
+  return (
+    <div style={{animation:"up 0.3s ease"}}>
+      <Panel s={{borderColor:K.amber+"88"}} ch={<>
+        <Lbl t="⚠ REACTIVE TINNITUS DETECTED" c={K.amber} s={{marginBottom:10}}/>
+
+        <Lbl t="What you're describing is consistent with reactive tinnitus — a subtype where the auditory system overreacts to sound input. This is important because:"
+          s={{lineHeight:1.9, fontSize:14, marginBottom:12}}/>
+
+        <Lbl t={"▸ Sound therapy can sometimes worsen symptoms for people with reactive tinnitus if introduced too aggressively\n▸ Clinical guidance recommends stabilizing sound sensitivity before starting sustained sound therapy\n▸ Starting with very low volume and short sessions (15–20 min) is essential\n▸ If your tinnitus consistently spikes after sessions, stop and consult an audiologist"}
+          s={{lineHeight:2.0, fontSize:13, whiteSpace:"pre-line", marginBottom:16}}/>
+
+        <Lbl t="You can still use this app, but we'll start with conservative settings — lower volume, shorter sessions. If your symptoms worsen with use, please consult a qualified audiologist or ENT specialist."
+          s={{lineHeight:1.9, fontSize:14, marginBottom:16, color:K.text}}/>
+
+        <div style={{display:"flex", gap:10}}>
+          <button onClick={onContinueCautious} style={{
+            flex:1, padding:"12px", background:"rgba(255,165,2,0.08)",
+            border:`1px solid ${K.amber}`, borderRadius:8,
+            color:K.amber, fontFamily:"system-ui", fontWeight:700, fontSize:14, cursor:"pointer"
+          }}>
+            CONTINUE WITH CAUTION →
+          </button>
+          <button onClick={onGoBack} style={{
+            padding:"12px 20px", background:"transparent",
+            border:`1px solid ${K.muted}`, borderRadius:8,
+            color:K.muted, fontFamily:"system-ui", fontSize:14, cursor:"pointer"
+          }}>
+            ← BACK
+          </button>
+        </div>
+      </>}/>
+    </div>
+  );
+}
+
+// ─── Post-Session Check-In (Section 2.1) ────────────────────────────────────
+function PostSessionCheckIn({onDismiss, onReportIssue}) {
+  return (
+    <Panel s={{marginBottom:14, borderColor:K.amber+"55"}} ch={<>
+      <Lbl t="POST-SESSION CHECK" c={K.amber} s={{marginBottom:10, fontSize:14}}/>
+      <Lbl t="After your session, did you notice any of the following?"
+        s={{marginBottom:14, lineHeight:1.8, fontSize:14}}/>
+
+      <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:14}}>
+        {[
+          "New tones or pitches I don't normally hear",
+          "My tinnitus sounds louder than before the session",
+          "Discomfort or pain during or after the session",
+          "No changes — everything seems normal",
+        ].map((opt, i) => (
+          <button key={i} onClick={() => i < 3 ? onReportIssue(opt) : onDismiss()}
+            style={{
+              padding:"12px 16px", textAlign:"left",
+              background: i < 3 ? "rgba(255,165,2,0.04)" : "rgba(0,212,180,0.04)",
+              border:`1px solid ${i < 3 ? K.amber+"44" : K.teal+"44"}`,
+              borderRadius:8, color: K.text, fontSize:14,
+              fontFamily:"system-ui", cursor:"pointer",
+            }}>
+            {opt}
+          </button>
+        ))}
+      </div>
+    </>}/>
+  );
+}
+
+function SessionIssueGuidance({issue, onDismiss}) {
+  return (
+    <Panel s={{borderColor:K.amber+"88"}} ch={<>
+      <Lbl t="⚠ WHAT YOU'RE EXPERIENCING" c={K.amber} s={{marginBottom:10}}/>
+
+      <Lbl t="This is a documented response to sound therapy — you are not unique or broken. Here's what's likely happening:"
+        s={{marginBottom:14, lineHeight:1.8, fontSize:14}}/>
+
+      <div style={{marginBottom:14}}>
+        <Lbl t="REBOUND EFFECT" c={K.text} s={{fontWeight:700, marginBottom:6, fontSize:14}}/>
+        <Lbl t="When sound therapy stops, the auditory neurons that were being suppressed can temporarily fire above their baseline rate. This produces transient new sounds or louder tinnitus that typically lasts seconds to minutes. Clinical research recommends fading sound out gradually rather than stopping abruptly."
+          s={{lineHeight:1.9, fontSize:13, marginBottom:10}}/>
+
+        <Lbl t="RESIDUAL EXCITATION" c={K.text} s={{fontWeight:700, marginBottom:6, fontSize:14}}/>
+        <Lbl t="In rare cases (documented in the research literature), acoustic stimulation can temporarily increase tinnitus loudness rather than suppress it. Animal studies show ~40% of auditory neurons exhibit post-suppression rebound firing after sound offset."
+          s={{lineHeight:1.9, fontSize:13, marginBottom:10}}/>
+
+        <Lbl t="REACTIVE TINNITUS" c={K.text} s={{fontWeight:700, marginBottom:6, fontSize:14}}/>
+        <Lbl t="Some people have tinnitus that reacts to sound exposure. If your tinnitus consistently gets louder or changes after everyday sound exposure (not just this app), you may have reactive tinnitus, which requires a different treatment approach — consult an audiologist before continuing."
+          s={{lineHeight:1.9, fontSize:13}}/>
+      </div>
+
+      <Lbl t="WHAT TO DO NEXT" c={K.teal} s={{marginBottom:8, fontSize:14}}/>
+      <Lbl t={"▸ Reduce volume by at least 10 dB for your next session\n▸ Shorten sessions to 20–30 minutes\n▸ Try pink noise or music instead of white noise (less high-frequency energy)\n▸ Use the app's fade-out feature — don't stop abruptly\n▸ If new tones persist beyond a few minutes, stop using the app and consult your doctor\n▸ If symptoms worsen with each session rather than improving, see an audiologist — you may need a different therapeutic approach"}
+        s={{lineHeight:2.0, fontSize:13, whiteSpace:"pre-line"}}/>
+
+      <button onClick={onDismiss} style={{
+        marginTop:16, width:"100%", padding:"12px",
+        background:"rgba(0,212,180,0.06)", border:`1px solid ${K.teal}`,
+        borderRadius:8, color:K.teal, fontFamily:"system-ui",
+        fontWeight:600, fontSize:14, cursor:"pointer"
+      }}>
+        I UNDERSTAND — CLOSE
+      </button>
+    </>}/>
+  );
+}
+
 // ─── Root ─────────────────────────────────────────────────────────────────────
 export default function App() {
   const [currentUser, setCurrentUser] = useState(null);
@@ -3084,6 +3488,7 @@ export default function App() {
   const [tVol,        setTVol]        = useState(55);
   const [tEar,        setTEar]        = useState("both");
   const [noiseOnly,   setNoiseOnly]   = useState(false);
+  const [reactive,    setReactive]    = useState(false);
   const [prevPhase,   setPrevPhase]   = useState("intro");
 
   const uid = currentUser?.id;
@@ -3093,6 +3498,13 @@ export default function App() {
     const savedHRes  = uGetJ(user.id,"audiogram_latest",null);
     const savedTFreq = parseInt(uGet(user.id,"freq")||"0",10)||9400;
     setHRes(savedHRes); setTFreq(savedTFreq);
+    // One-time reactivity screening for existing users (Section 4.1)
+    const hasScreened = uGet(user.id, "reactivity_screened");
+    if (intent === "therapy" && !hasScreened) {
+      uSet(user.id, "reactivity_screened", "1");
+      setPhase("reactivity");
+      return;
+    }
     if (intent === "therapy" && savedHRes && savedTFreq) { setPhase("therapy"); return; }
     if (uGet(user.id,"disclaimer") !== "1") { setPhase("disclaimer"); return; }
     setPhase("intro");
@@ -3115,13 +3527,15 @@ export default function App() {
   const back = () => {
     if (phase === "history") { setPhase(prevPhase); return; }
     const prev = {
-      calibration: "intro",
-      tintype:     "intro",
-      test:        "tintype",
-      testresults: "test",
-      tone:        hRes ? "testresults" : "tintype",
-      octavecheck: "tone",
-      therapy:     noiseOnly ? "tintype" : "octavecheck",
+      calibration:    "intro",
+      tintype:        "intro",
+      reactivity:     "tintype",
+      reactivewarning:"reactivity",
+      test:           "reactivity",
+      testresults:    "test",
+      tone:           hRes ? "testresults" : "tintype",
+      octavecheck:    "tone",
+      therapy:        noiseOnly ? "tintype" : "octavecheck",
     };
     if (prev[phase]) setPhase(prev[phase]);
   };
@@ -3134,7 +3548,7 @@ export default function App() {
       <div style={{maxWidth:700,margin:"0 auto"}}>
         <NavBar phase={phase} currentUser={currentUser} onBack={back} onRestart={restart} onHistory={goHistory} onSwitchUser={()=>setPhase("accounts")}/>
         <ErrorBoundary>
-          {phase!=="accounts"&&phase!=="intro"&&phase!=="tintype"&&phase!=="disclaimer"&&phase!=="calibration"&&phase!=="history"&&<StepBar phase={phase}/>}
+          {phase!=="accounts"&&phase!=="intro"&&phase!=="tintype"&&phase!=="disclaimer"&&phase!=="calibration"&&phase!=="history"&&phase!=="reactivity"&&phase!=="reactivewarning"&&<StepBar phase={phase}/>}
 
           {phase==="accounts"   && <AccountScreen onSelect={selectUser}/>}
 
@@ -3151,9 +3565,26 @@ export default function App() {
               onSkip={goFromIntro}/>}
 
           {phase==="tintype"    && <TinnitusTypeScreen
-              onTonal={()=>setPhase("test")}
+              onTonal={()=>setPhase("reactivity")}
               onNoise={()=>goTherapy(9400, true)}
-              onUnsure={()=>setPhase("test")}/>}
+              onUnsure={()=>setPhase("reactivity")}/>}
+
+          {phase==="reactivity" && <ReactivityScreen
+              onContinue={()=>{ setReactive(false); if(uid){uSet(uid,"reactivity_screened","1");} setPhase("test"); }}
+              onUnsure={()=>{
+                setReactive(false);
+                if(uid){uSetJ(uid,"reactivity_unsure",true); uSet(uid,"reactivity_screened","1");}
+                setPhase("test");
+              }}
+              onReactiveWarning={()=>setPhase("reactivewarning")}/>}
+
+          {phase==="reactivewarning" && <ReactiveWarning
+              onContinueCautious={()=>{
+                setReactive(true);
+                if(uid){uSetJ(uid,"reactive",true); uSet(uid,"reactivity_screened","1");}
+                setPhase("test");
+              }}
+              onGoBack={()=>setPhase("reactivity")}/>}
 
           {phase==="test"       && <HearingTest
               calibrated={uid ? uGet(uid,"cal_date") && !uGet(uid,"cal_skipped") : false}
@@ -3211,6 +3642,7 @@ export default function App() {
               tinnitusFreq={tFreq}
               hearingResults={hRes}
               noiseTypeOnly={noiseOnly}
+              reactive={reactive || (uid && uGetJ(uid, "reactive", false))}
               userId={uid}/>}
         </ErrorBoundary>
       </div>
