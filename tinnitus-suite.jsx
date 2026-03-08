@@ -52,7 +52,7 @@ const CATS = [
   {max:130, label:"Profound",    color:"#a29bfe"},
 ];
 
-const APP_VERSION = "1.1.0";
+const APP_VERSION = "1.2.0";
 
 const NOISE_TYPES = [
   {id:"music",   label:"Notched Music ★",desc:"Upload your music — strongest evidence (Okamoto 2010)", color:"#ffd32a",rec:true},
